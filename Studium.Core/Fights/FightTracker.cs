@@ -7,8 +7,11 @@ public sealed record ActorSnapshot(string Name, uint JobId, uint OwnerId);
 /// <summary>What the tracker needs to know about the world. The plugin implements it; tests fake it.</summary>
 public interface ICombatWorld
 {
-    /// <summary>True for you and your party members (not pets; pets are resolved through their owner).</summary>
+    /// <summary>True for you, your party and your alliance (not pets; pets are resolved through their owner).</summary>
     bool IsAlly(uint entityId);
+
+    /// <summary>True for any other player character (hunts, FATEs): shown when enabled, but they never start fights.</summary>
+    bool IsOtherPlayer(uint entityId) => false;
 
     ActorSnapshot? Lookup(uint entityId);
 
@@ -54,6 +57,12 @@ public sealed class FightTracker
 
     public event Action<Fight>? FightEnded;
 
+    /// <summary>
+    /// Also count players outside your party / alliance. They're shown and keep a running fight going, but
+    /// only you, your party and your alliance start fights, and only they count for wipes.
+    /// </summary>
+    public bool IncludeOtherPlayers { get; set; } = true;
+
     /// <summary>Called by the plugin when a fight starts, to record zone and character.</summary>
     public Func<FightContext>? ContextProvider { get; set; }
 
@@ -82,7 +91,7 @@ public sealed class FightTracker
             case DeathEvent death:
                 if (Current == null)
                     break;
-                if (world.IsAlly(death.TargetId))
+                if (Counts(death.TargetId, 0))
                 {
                     var victim = Stats(death.TargetId);
                     victim.Deaths++;
@@ -175,12 +184,18 @@ public sealed class FightTracker
 
     private void HandleHit(ActionHitEvent hit)
     {
-        var sourceIsAlly = IsAllyOrAllyPet(hit.SourceId, hit.SourceOwnerId);
-        var targetIsAlly = world.IsAlly(hit.TargetId);
+        // "IsAlly" here means "counted": your party / alliance, plus other players when enabled.
+        var sourceIsAlly = Counts(hit.SourceId, hit.SourceOwnerId);
+        var targetIsAlly = Counts(hit.TargetId, 0);
+        var allyInvolved = IsAllyOrAllyPet(hit.SourceId, hit.SourceOwnerId) || world.IsAlly(hit.TargetId);
+        // Other players only count against enemies your party / alliance is already fighting, so people
+        // fighting unrelated mobs nearby don't leak into (or prolong) your fight.
+        if (!allyInvolved && !FightsKnownEnemy(hit.SourceId, hit.SourceOwnerId, hit.TargetId, sourceIsAlly))
+            return;
 
         if (hit.Kind is HitKind.Damage or HitKind.BlockedDamage or HitKind.ParriedDamage)
         {
-            if (!EnsureFight(hit.Time, sourceIsAlly, targetIsAlly))
+            if (!EnsureFight(hit.Time, sourceIsAlly, targetIsAlly, allyInvolved))
                 return;
 
             if (sourceIsAlly && !targetIsAlly)
@@ -252,8 +267,14 @@ public sealed class FightTracker
 
     private void HandleTick(PeriodicTickEvent tick)
     {
-        var sourceIsAlly = IsAllyOrAllyPet(tick.SourceId, tick.SourceOwnerId);
-        var targetIsAlly = world.IsAlly(tick.TargetId);
+        // "IsAlly" here means "counted": your party / alliance, plus other players when enabled.
+        var sourceIsAlly = Counts(tick.SourceId, tick.SourceOwnerId);
+        var targetIsAlly = Counts(tick.TargetId, 0);
+        var allyInvolved = IsAllyOrAllyPet(tick.SourceId, tick.SourceOwnerId) || world.IsAlly(tick.TargetId);
+        // Other players only count against enemies your party / alliance is already fighting, so people
+        // fighting unrelated mobs nearby don't leak into (or prolong) your fight.
+        if (!allyInvolved && !FightsKnownEnemy(tick.SourceId, tick.SourceOwnerId, tick.TargetId, sourceIsAlly))
+            return;
 
         if (tick.IsHeal)
         {
@@ -275,7 +296,7 @@ public sealed class FightTracker
             return;
         }
 
-        if (!EnsureFight(tick.Time, sourceIsAlly, targetIsAlly))
+        if (!EnsureFight(tick.Time, sourceIsAlly, targetIsAlly, allyInvolved))
             return;
 
         if (sourceIsAlly && !targetIsAlly)
@@ -298,15 +319,19 @@ public sealed class FightTracker
         }
     }
 
-    /// <summary>Starts a fight if this damage is between an ally and a non-ally. Returns whether a fight is running.</summary>
-    private bool EnsureFight(DateTime time, bool sourceIsAlly, bool targetIsAlly)
+    /// <summary>
+    /// For damage between a counted player and an enemy: starts a fight if your party / alliance is involved,
+    /// otherwise only keeps a running one going. Returns whether a fight is running.
+    /// </summary>
+    private bool EnsureFight(DateTime time, bool sourceCounts, bool targetCounts, bool allyInvolved)
     {
-        var involvesParty = sourceIsAlly != targetIsAlly;
-        if (!involvesParty)
+        if (sourceCounts == targetCounts)
             return false;
 
         if (Current == null)
         {
+            if (!allyInvolved)
+                return false;
             var context = ContextProvider?.Invoke();
             Current = new Fight
             {
@@ -331,6 +356,20 @@ public sealed class FightTracker
 
     private bool IsAllyOrAllyPet(uint id, uint ownerId) =>
         world.IsAlly(id) || (ownerId != 0 && world.IsAlly(ownerId));
+
+    /// <summary>Whether the enemy side of this event is already part of the current fight.</summary>
+    private bool FightsKnownEnemy(uint sourceId, uint sourceOwnerId, uint targetId, bool sourceIsPlayer)
+    {
+        if (Current == null)
+            return false;
+        var enemyId = sourceIsPlayer ? targetId : sourceOwnerId != 0 ? sourceOwnerId : sourceId;
+        return Current.Enemies.ContainsKey(enemyId);
+    }
+
+    /// <summary>Whether this actor's numbers are recorded: allies, and other players (and their pets) when enabled.</summary>
+    private bool Counts(uint id, uint ownerId) =>
+        IsAllyOrAllyPet(id, ownerId)
+        || (IncludeOtherPlayers && (world.IsOtherPlayer(id) || (ownerId != 0 && world.IsOtherPlayer(ownerId))));
 
     private CombatantStats Stats(uint id, uint ownerId = 0)
     {

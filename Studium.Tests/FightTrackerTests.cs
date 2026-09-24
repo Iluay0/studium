@@ -6,7 +6,7 @@ namespace Studium.Tests;
 
 public class FightTrackerTests
 {
-    private const uint Me = 1, Healer = 2, MyPet = 50, Boss = 100, Add = 101;
+    private const uint Me = 1, Healer = 2, MyPet = 50, Boss = 100, Add = 101, Stranger = 200, OtherMob = 300;
     private static readonly DateTime T0 = new(2026, 9, 24, 20, 0, 0, DateTimeKind.Utc);
 
     private sealed class FakeWorld : ICombatWorld
@@ -19,6 +19,8 @@ public class FightTrackerTests
 
         public bool IsDead(uint id) => Dead.Contains(id);
 
+        public bool IsOtherPlayer(uint id) => id == Stranger;
+
         public bool IsEngaged(uint id) => Engaged.Contains(id);
 
         public ActorSnapshot? Lookup(uint id) => id switch
@@ -28,6 +30,8 @@ public class FightTrackerTests
             MyPet => new("Eos", 0, Me),
             Boss => new("Striking Dummy", 0, 0),
             Add => new("Add", 0, 0),
+            Stranger => new("Some Stranger", 21, 0),
+            OtherMob => new("Other Mob", 0, 0),
             _ => null,
         };
     }
@@ -442,5 +446,54 @@ public class FightTrackerTests
         Assert.Null(tracker.Current);
         Assert.Equal(FightOutcome.Wipe, tracker.Last!.Outcome);
         Assert.Equal(TimeSpan.FromSeconds(30), tracker.Last.FinalDuration);
+    }
+
+    [Fact]
+    public void OtherPlayersNeverStartFights()
+    {
+        tracker.Handle(Hit(0, Stranger, Boss, 1000));
+        Assert.Null(tracker.Current);
+    }
+
+    [Fact]
+    public void OtherPlayersAreCountedAgainstOurEnemiesAndKeepTheFightGoing()
+    {
+        tracker.Handle(Hit(0, Me, Boss, 1000));
+        tracker.Handle(Hit(20, Stranger, Boss, 5000));
+
+        var fight = tracker.Current!;
+        Assert.Equal(5000, fight.Combatants[Stranger].Damage);
+        Assert.Equal(T0.AddSeconds(20), fight.LastActivity);
+        // Their fighting keeps the fight open past the idle timeout that would otherwise end it.
+        tracker.Update(T0.AddSeconds(45), partyInCombat: false);
+        Assert.NotNull(tracker.Current);
+    }
+
+    [Fact]
+    public void OtherPlayersFightingUnrelatedMobsAreIgnored()
+    {
+        tracker.Handle(Hit(0, Me, Boss, 1000));
+        tracker.Handle(Hit(1, Stranger, OtherMob, 5000));
+        Assert.DoesNotContain(Stranger, tracker.Current!.Combatants.Keys);
+        Assert.DoesNotContain(OtherMob, tracker.Current.Enemies.Keys);
+    }
+
+    [Fact]
+    public void OtherPlayersCanBeTurnedOff()
+    {
+        tracker.IncludeOtherPlayers = false;
+        tracker.Handle(Hit(0, Me, Boss, 1000));
+        tracker.Handle(Hit(1, Stranger, Boss, 5000));
+        Assert.DoesNotContain(Stranger, tracker.Current!.Combatants.Keys);
+    }
+
+    [Fact]
+    public void OtherPlayersDontCountForWipes()
+    {
+        tracker.Handle(Hit(0, Me, Boss, 1000));
+        tracker.Handle(Hit(1, Stranger, Boss, 5000));
+        world.Dead.Add(Me);
+        tracker.Handle(new DeathEvent(T0.AddSeconds(2), Me, Boss)); // the stranger is still alive
+        Assert.True(tracker.Current!.PartyWiped);
     }
 }

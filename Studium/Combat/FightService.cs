@@ -22,14 +22,18 @@ public sealed class FightService : ICombatWorld, IDisposable
     private readonly IPartyList partyList;
     private readonly IDutyState dutyState;
     private readonly HashSet<uint> allies = new();
+    private readonly HashSet<uint> partyMembers = new();
+    private readonly HashSet<uint> otherPlayers = new();
+    private readonly Configuration config;
     private readonly Dictionary<uint, (byte Shield, HashSet<uint> Statuses)> lastDefense = new();
 
     public FightTracker Tracker { get; }
 
     public FightService(
         GameCombatEventSource source, IFramework framework, ICondition condition, IObjectTable objectTable,
-        IPartyList partyList, IDutyState dutyState, IClientState clientState, GameNames names)
+        IPartyList partyList, IDutyState dutyState, IClientState clientState, GameNames names, Configuration config)
     {
+        this.config = config;
         this.source = source;
         this.framework = framework;
         this.condition = condition;
@@ -158,17 +162,42 @@ public sealed class FightService : ICombatWorld, IDisposable
             lastDefense.Remove(gone);
     }
 
+    /// <summary>
+    /// Allies are you, your party and (in alliance content) your alliance. Everyone else who's a player
+    /// is an "other player": shown when enabled, but they never start fights.
+    /// </summary>
     private void RefreshAllies()
     {
         allies.Clear();
+        partyMembers.Clear();
+        otherPlayers.Clear();
         if (objectTable.LocalPlayer is { } me)
-            allies.Add(me.EntityId);
+            partyMembers.Add(me.EntityId);
         foreach (var member in partyList)
         {
             if (member.EntityId != 0)
-                allies.Add(member.EntityId);
+                partyMembers.Add(member.EntityId);
         }
+        allies.UnionWith(partyMembers);
+
+        foreach (var player in objectTable.PlayerObjects)
+        {
+            if (player is not ICharacter character || allies.Contains(player.EntityId))
+                continue;
+            if (character.StatusFlags.HasFlag(StatusFlags.AllianceMember))
+                allies.Add(player.EntityId);
+            else
+                otherPlayers.Add(player.EntityId);
+        }
+
+        Tracker.IncludeOtherPlayers = config.ShowAllPlayers;
     }
+
+    public bool IsOtherPlayer(uint entityId) => otherPlayers.Contains(entityId);
+
+    /// <summary>You or a member of your own party (or their pet): shown at full brightness in the meter.</summary>
+    public bool IsPartyMember(uint entityId) =>
+        partyMembers.Contains(entityId) || partyMembers.Contains(source.Actors.OwnerOf(entityId));
 
     private bool IsPartyInCombat()
     {

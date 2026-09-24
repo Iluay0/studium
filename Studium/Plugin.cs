@@ -53,7 +53,7 @@ public sealed class Plugin : IDalamudPlugin
         // Hooks are live from here on; if anything below fails, release them so the game isn't left hooked.
         try
         {
-            Fights = new FightService(CombatEvents, Framework, Condition, ObjectTable, PartyList, DutyState, ClientState, Names);
+            Fights = new FightService(CombatEvents, Framework, Condition, ObjectTable, PartyList, DutyState, ClientState, Names, Configuration);
             History = new FightHistory(Configuration, Fights.Tracker, Framework, Log,
                 Path.Combine(PluginInterface.GetPluginConfigDirectory(), "fights"));
 

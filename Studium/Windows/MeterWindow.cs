@@ -464,7 +464,9 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
         ImGui.SameLine(0, 6);
         // Only player names (they have a job) get shortened; pet names stay as the game names them.
         var name = row.JobId != 0 ? NameFormatter.Format(row.Name, isSelf, Config.NameDisplay, Config.YouForSelf) : row.Name;
-        Widgets.Text(isSelf ? Theme.Bright : Theme.Text, name);
+        // Your party at full brightness; alliance members and other players muted.
+        var colour = isSelf ? Theme.Bright : plugin.Fights.IsPartyMember(row.Id) ? Theme.Text : Theme.Muted;
+        Widgets.Text(colour, name);
     }
 
     /// <summary>0xRRGGBB + alpha → ImGui's packed ABGR.</summary>

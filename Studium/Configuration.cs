@@ -23,6 +23,8 @@ public class Configuration : IPluginConfiguration
     public NameDisplay NameDisplay { get; set; } = NameDisplay.Full;
     public bool YouForSelf { get; set; }
     public bool MergePets { get; set; } = true;
+    /// <summary>Also show players outside your party / alliance (hunts, FATEs). They never start fights.</summary>
+    public bool ShowAllPlayers { get; set; } = true;
     public GaugeStyle GaugeStyle { get; set; } = GaugeStyle.Underline;
     /// <summary>Column IDs per tab, in order (see MeterColumns). Missing tab → that tab's defaults.</summary>
     public Dictionary<MeterTab, List<string>> MeterColumns { get; set; } = new();
