@@ -70,6 +70,20 @@ public static class Overheal
         maxHp == 0 ? 0 : Math.Clamp(amount - Math.Max((long)maxHp - currentHp, 0), 0, amount);
 }
 
+/// <summary>
+/// A party member's shield went up (seen on the game's shield gauge). <see cref="StatusId"/> / <see cref="SourceId"/>
+/// are the status that appeared with it and who applied it, or 0 when none could be matched.
+/// </summary>
+public sealed record ShieldGainedEvent(
+    DateTime Time,
+    uint TargetId,
+    uint SourceId,
+    uint StatusId,
+    byte ShieldPercentBefore,
+    byte ShieldPercentAfter,
+    TargetHp Hp,
+    DefenseSnapshot? Defense = null) : CombatEvent(Time);
+
 public sealed record DeathEvent(DateTime Time, uint TargetId, uint SourceId) : CombatEvent(Time);
 
 public sealed record CastStartEvent(

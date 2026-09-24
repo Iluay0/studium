@@ -144,4 +144,61 @@ public class DeathRecapTests
 
         public int GetHashCode(DefenseSnapshot? obj) => obj?.ShieldPercent ?? 0;
     }
+
+    [Fact]
+    public void ShieldAbsorbsDamageBeforeHp()
+    {
+        // 100k max HP, 50k HP, 20% shield (20k). A 30k hit: 20k absorbed, 10k off HP, no shield left.
+        var hp = new TargetHp(50_000, 100_000);
+        var (hpAfter, shieldAfter) = DeathRecorder.After(new(RecapKind.Damage, 30_000, 0), hp, 20);
+        Assert.Equal(40_000u, hpAfter);
+        Assert.Equal(0, shieldAfter);
+
+        // A 5k hit into the same shield: HP untouched, 15% shield left.
+        (hpAfter, shieldAfter) = DeathRecorder.After(new(RecapKind.Damage, 5_000, 0), hp, 20);
+        Assert.Equal(50_000u, hpAfter);
+        Assert.Equal(15, shieldAfter);
+    }
+
+    [Fact]
+    public void RecapUsesTheShieldForHpAfter()
+    {
+        tracker.Handle(new ActionHitEvent(T0.AddSeconds(1), Boss, 0, Me, 500, 1, HitKind.Damage, 30_000, false, false,
+            Hp: new TargetHp(50_000, 100_000), Defense: new DefenseSnapshot([], [], 20)));
+        tracker.Handle(new DeathEvent(T0.AddSeconds(2), Me, Boss));
+        var e = tracker.Current!.Deaths[0].Events[0];
+        Assert.Equal(40_000u, e.HpAfter);
+        Assert.Equal(0, e.ShieldAfterPercent);
+    }
+
+    [Fact]
+    public void ShieldGainIsItsOwnLineWithExactValues()
+    {
+        const uint BrutalShell = 1997;
+        tracker.Handle(new ActionHitEvent(T0, Boss, 0, Me, 500, 1, HitKind.Damage, 10_000, false, false, Hp: new TargetHp(100_000, 100_000)));
+        tracker.Handle(new ShieldGainedEvent(T0.AddSeconds(1), Me, Me, BrutalShell, 0, 8, new TargetHp(90_000, 100_000)));
+        tracker.Handle(new ActionHitEvent(T0.AddSeconds(2), Boss, 0, Me, 501, 1, HitKind.Damage, 20_000, false, false,
+            Hp: new TargetHp(90_000, 100_000), Defense: new DefenseSnapshot([], [], 8)));
+        tracker.Handle(new DeathEvent(T0.AddSeconds(3), Me, Boss));
+
+        var events = tracker.Current!.Deaths[0].Events;
+        var shield = events.Single(e => e.Kind == RecapKind.Shield);
+        Assert.Equal(AbilityStats.StatusKey(BrutalShell), shield.AbilityKey);
+        Assert.Equal("Iluay Dory", shield.SourceName);
+        Assert.Equal(8_000, shield.Amount);
+        Assert.Equal(90_000u, shield.HpAfter);
+        Assert.Equal(8, shield.ShieldAfterPercent);
+
+        // The next hit eats the 8k shield first: 12k comes off HP.
+        var hit = events.First();
+        Assert.Equal(78_000u, hit.HpAfter);
+        Assert.Equal(0, hit.ShieldAfterPercent);
+    }
+
+    [Fact]
+    public void ShieldGainsOutsideAFightOrOnOthersAreIgnored()
+    {
+        tracker.Handle(new ShieldGainedEvent(T0, Me, Me, 1, 0, 10, new TargetHp(1, 1)));
+        Assert.Null(tracker.Current);
+    }
 }

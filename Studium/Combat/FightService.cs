@@ -22,6 +22,7 @@ public sealed class FightService : ICombatWorld, IDisposable
     private readonly IPartyList partyList;
     private readonly IDutyState dutyState;
     private readonly HashSet<uint> allies = new();
+    private readonly Dictionary<uint, (byte Shield, HashSet<uint> Statuses)> lastDefense = new();
 
     public FightTracker Tracker { get; }
 
@@ -116,6 +117,41 @@ public sealed class FightService : ICombatWorld, IDisposable
         PartyInCombat = IsPartyInCombat();
         InDuty = condition[ConditionFlag.BoundByDuty] || condition[ConditionFlag.BoundByDuty56] || condition[ConditionFlag.BoundByDuty95];
         Tracker.Update(DateTime.UtcNow, PartyInCombat);
+        WatchShields();
+    }
+
+    /// <summary>
+    /// Shields have no event of their own, so watch each party member's shield gauge. When it goes up,
+    /// credit the status that appeared with it (e.g. Brutal Shell) and whoever applied it.
+    /// </summary>
+    private void WatchShields()
+    {
+        foreach (var id in allies)
+        {
+            if (objectTable.SearchByEntityId(id) is not IBattleChara member)
+                continue;
+
+            var shield = member.ShieldPercentage;
+            var statuses = new HashSet<uint>();
+            foreach (var status in member.StatusList)
+            {
+                if (status.StatusId != 0)
+                    statuses.Add(status.StatusId);
+            }
+
+            if (lastDefense.TryGetValue(id, out var last) && shield > last.Shield && Tracker.Current != null)
+            {
+                var gained = member.StatusList.FirstOrDefault(s => s.StatusId != 0 && !last.Statuses.Contains(s.StatusId));
+                var sourceId = gained?.SourceId is { } src and not EffectDecoder.InvalidEntityId ? src : 0;
+                Tracker.Handle(new ShieldGainedEvent(DateTime.UtcNow, id, sourceId, gained?.StatusId ?? 0, last.Shield, shield,
+                    new TargetHp(member.CurrentHp, member.MaxHp), source.ReadDefense(id, 0)));
+            }
+            lastDefense[id] = (shield, statuses);
+        }
+
+        // Forget players who left the party.
+        foreach (var gone in lastDefense.Keys.Where(k => !allies.Contains(k)).ToList())
+            lastDefense.Remove(gone);
     }
 
     private void RefreshAllies()

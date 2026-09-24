@@ -226,7 +226,7 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
     /// A party member's defences as a hit lands: their statuses minus noise, the party's debuffs on the attacker,
     /// and their shield. Only called for party members, so the extra object lookups stay cheap.
     /// </summary>
-    private DefenseSnapshot? ReadDefense(uint targetId, uint attackerId)
+    public DefenseSnapshot? ReadDefense(uint targetId, uint attackerId)
     {
         if (objectTable.SearchByEntityId(targetId) is not IBattleChara target)
             return null;
@@ -240,7 +240,7 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
         }
 
         var onAttacker = new List<StatusSnapshot>();
-        if (attackerId != targetId && objectTable.SearchByEntityId(attackerId) is IBattleChara attacker)
+        if (attackerId != 0 && attackerId != targetId && objectTable.SearchByEntityId(attackerId) is IBattleChara attacker)
         {
             foreach (var status in attacker.StatusList)
             {

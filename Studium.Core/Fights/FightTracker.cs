@@ -60,6 +60,11 @@ public sealed class FightTracker
             case PeriodicTickEvent tick:
                 HandleTick(tick);
                 break;
+            case ShieldGainedEvent shield:
+                if (Current != null && world.IsAlly(shield.TargetId))
+                    deaths.Shield(shield.TargetId, shield.Time, shield.SourceId, shield.StatusId, shield.ShieldPercentBefore,
+                        shield.ShieldPercentAfter, shield.Hp, shield.Defense);
+                break;
             case DeathEvent death:
                 if (Current == null)
                     break;

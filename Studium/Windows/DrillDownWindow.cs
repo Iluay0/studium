@@ -198,6 +198,17 @@ public sealed class DrillDownWindow : Theme.ThemedWindow
             case DeathColumn.Time:
                 ImGui.TextColored(Theme.Muted, TimeText(e));
                 break;
+            case DeathColumn.Event when e.Kind == RecapKind.Shield:
+                // Shield lines are named after the status that brought the shield.
+                var statusId = AbilityStats.IsStatusKey(e.AbilityKey) ? AbilityStats.StatusIdOf(e.AbilityKey) : 0;
+                if (statusId != 0)
+                    Widgets.GameIcon(plugin.Names.Status(statusId).Icon, iconSize);
+                else
+                    Widgets.GameIcon(0, iconSize);
+                ImGui.SameLine(0, 6);
+                ImGui.SetCursorPosY(ImGui.GetCursorPosY() + textOffset);
+                FittedText(statusId != 0 ? plugin.Names.Status(statusId).Name : "Shield", Theme.Text);
+                break;
             case DeathColumn.Event:
                 DrawKeyIcon(e.AbilityKey, iconSize);
                 ImGui.SameLine(0, 6);
@@ -218,7 +229,7 @@ public sealed class DrillDownWindow : Theme.ThemedWindow
                 }
                 break;
             case DeathColumn.Hp:
-                DrawHpBar(e.HpAfter, e.MaxHp, e.Defense?.ShieldPercent ?? 0);
+                DrawHpBar(e.HpAfter, e.MaxHp, e.ShieldAfterPercent);
                 break;
             case DeathColumn.OnEnemy:
                 DrawStatuses(e.Defense?.OnAttacker, iconSize);
@@ -238,13 +249,14 @@ public sealed class DrillDownWindow : Theme.ThemedWindow
             ImGui.SetTooltip(text);
     }
 
-    private static string TimeText(RecapEvent e) => $"−{e.SecondsBeforeDeath:0.0}s";
+    private static string TimeText(RecapEvent e) => $"-{e.SecondsBeforeDeath:0.0}s";
 
     private static (string Text, Vector4 Colour) AmountText(RecapEvent e) => e.Kind switch
     {
         RecapKind.Heal => ($"+{e.Amount:N0}", Theme.Clear),
+        RecapKind.Shield => ($"+{e.Amount:N0}", Theme.Accent),
         RecapKind.Miss => ("Miss", Theme.Dim),
-        _ => ($"−{e.Amount:N0}", Theme.Wipe),
+        _ => ($"-{e.Amount:N0}", Theme.Wipe),
     };
 
     private static string MarksText(RecapEvent e) =>
