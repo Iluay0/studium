@@ -22,7 +22,9 @@ public sealed record CombatantRow(
     double DamageTakenShare,
     double ParryRate,
     double BlockRate,
-    long HealingReceived);
+    long HealingReceived,
+    int Hits = 0,
+    int Misses = 0);
 
 /// <summary>
 /// One ability in a drill-down. <see cref="PetName"/> is set when the ability belongs to a merged pet.
@@ -96,7 +98,9 @@ public static class FightView
                 Share(taken, totalTaken),
                 Share(Count(m => m.Parried), hitsTaken),
                 Share(Count(m => m.Blocked), hitsTaken),
-                Sum(m => m.HealingReceived)));
+                Sum(m => m.HealingReceived),
+                hits,
+                Count(m => m.Misses)));
         }
 
         return new FightSummary(rows, totalDamage / seconds, totalHealing / seconds);

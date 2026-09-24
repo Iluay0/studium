@@ -11,6 +11,7 @@ public sealed class SettingsWindow : Window
 {
     private readonly Plugin plugin;
     private readonly FileDialogManager fileDialog = new();
+    private MeterTab columnsTab = MeterTab.Dps;
     private volatile bool storageStatsDirty = true;
     private string storageStats = string.Empty;
     private Configuration Config => plugin.Configuration;
@@ -94,8 +95,102 @@ public sealed class SettingsWindow : Window
 
         changed |= Checkbox("Merge pets into owner", () => Config.MergePets, v => Config.MergePets = v);
 
+        ImGui.Spacing();
+        ImGui.Separator();
+        changed |= DrawColumnsEditor();
+
         if (changed)
             Config.Save();
+    }
+
+    /// <summary>Per-tab column picker: show/hide the tab's columns, reorder with arrows, reset to the tab's defaults.</summary>
+    private bool DrawColumnsEditor()
+    {
+        ImGui.TextUnformatted("Columns for the");
+        foreach (var (tab, label) in new[] { (MeterTab.Dps, "DPS"), (MeterTab.Tank, "Tank"), (MeterTab.Heal, "Heal") })
+        {
+            ImGui.SameLine();
+            if (ImGui.RadioButton($"{label}##columnsTab", columnsTab == tab))
+                columnsTab = tab;
+        }
+        ImGui.SameLine();
+        ImGui.TextUnformatted("tab");
+        ImGui.TextDisabled("Name always comes first. The first column after it stays when the meter is narrow;");
+        ImGui.TextDisabled("the others drop from the right.");
+
+        var shown = MeterColumns.Resolve(Config.MeterColumns.GetValueOrDefault(columnsTab), columnsTab).Select(c => c.Id).ToList();
+        var edited = new List<string>(shown);
+        var changed = false;
+
+        if (!ImGui.BeginTable("##columns", 3, ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.RowBg))
+            return false;
+        ImGui.TableSetupColumn("Column");
+        ImGui.TableSetupColumn("Description", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("Order");
+
+        for (var i = 0; i < shown.Count; i++)
+        {
+            var column = MeterColumns.Get(shown[i]);
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            var visible = true;
+            using (Disabled(shown.Count == 1))
+            {
+                if (ImGui.Checkbox($"{column.Header}##show{column.Id}", ref visible) && !visible)
+                {
+                    edited.Remove(column.Id);
+                    changed = true;
+                }
+            }
+            if (shown.Count == 1 && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip("A tab needs at least one column besides Name.");
+            ImGui.TableNextColumn();
+            ImGui.TextDisabled(column.Description);
+            ImGui.TableNextColumn();
+            using (Disabled(i == 0))
+            {
+                if (ImGui.ArrowButton($"##up{column.Id}", ImGuiDir.Up))
+                {
+                    (edited[i - 1], edited[i]) = (edited[i], edited[i - 1]);
+                    changed = true;
+                }
+            }
+            ImGui.SameLine();
+            using (Disabled(i == shown.Count - 1))
+            {
+                if (ImGui.ArrowButton($"##down{column.Id}", ImGuiDir.Down))
+                {
+                    (edited[i + 1], edited[i]) = (edited[i], edited[i + 1]);
+                    changed = true;
+                }
+            }
+        }
+
+        foreach (var column in MeterColumns.Available(columnsTab).Where(id => !shown.Contains(id)).Select(MeterColumns.Get))
+        {
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            var visible = false;
+            if (ImGui.Checkbox($"{column.Header}##show{column.Id}", ref visible) && visible)
+            {
+                edited.Add(column.Id); // new columns join at the end
+                changed = true;
+            }
+            ImGui.TableNextColumn();
+            ImGui.TextDisabled(column.Description);
+            ImGui.TableNextColumn();
+        }
+        ImGui.EndTable();
+
+        if (ImGui.Button("Reset to default##columns"))
+        {
+            Config.MeterColumns.Remove(columnsTab);
+            return true;
+        }
+
+        if (changed)
+            Config.MeterColumns[columnsTab] = edited;
+        return changed;
     }
 
     private void DrawHistoryTab()

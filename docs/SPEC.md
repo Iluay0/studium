@@ -123,8 +123,8 @@ All options live here, never in the meter.
 
 1. **Shield estimation**, like IINACT/ACT: on by default, toggle to disable. Tracks shield-granting statuses and estimates absorbed damage per caster. About 3–5 days.
 2. **Death recap** (built): breakdown window gets Abilities | Deaths tabs; clicking the meter's Deaths number opens Deaths. Each death shows "mm:ss · killed by <ability> (<source>)" and the last 30 s newest first: time before death, ability (icon), source, amount (red damage / green heal / miss, with crit/DH/parry/block), HP after with a bar. Party members' HP is read with each hit/heal (before it applies). Saved with the fight. Follow-up idea: buffs/mitigation up at each hit.
-3. **DPS-over-time graph** per fight and pull comparison.
-4. **Per-tab column editor.**
+3. ~~DPS-over-time graph~~ dropped: FFLogs + xivanalysis cover it from the uploaded logs (and it would need per-fight time series storage).
+4. **Per-tab column editor** (built): Settings → Meter → Columns. Each tab offers only its own columns (DPS: DPS, D%, Total, Crit, DH, Max hit, Hits, Misses, Deaths; Tank: Taken, T%, Parry, Block, Healed-on, Deaths; Heal: HPS, H%, Total, Overheal, Heal crit, Deaths); show/hide and reorder with arrows, reset per tab. No moving columns between tabs. Hits/Misses start hidden. Name is always first; the first column after it is bright and never drops when narrow.
 5. **Custom plugin repo** (`repo.json`) for sharing with friends.
 
 ## Accuracy expectations

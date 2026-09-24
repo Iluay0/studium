@@ -304,42 +304,15 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
         ImGui.EndPopup();
     }
 
-    private sealed record Column(string Header, Func<CombatantRow, string> Value, Func<CombatantRow, string?>? Tooltip = null);
+    private sealed record Column(string Id, string Header, Func<CombatantRow, string> Value, Func<CombatantRow, string?>? Tooltip = null);
 
-    private Column[] ColumnsFor(MeterTab tab) => tab switch
-    {
-        MeterTab.Tank =>
-        [
-            new("Name", r => r.Name),
-            new("Taken", r => Format.Compact(r.DamageTaken)),
-            new("T%", r => Format.Percent(r.DamageTakenShare)),
-            new("Parry", r => Format.Percent(r.ParryRate)),
-            new("Block", r => Format.Percent(r.BlockRate)),
-            new("Healed-on", r => Format.Compact(r.HealingReceived)),
-            new("Deaths", r => r.Deaths.ToString()),
-        ],
-        MeterTab.Heal =>
-        [
-            new("Name", r => r.Name),
-            new("HPS", r => r.Hps.ToString("N0")),
-            new("H%", r => Format.Percent(r.HealingShare)),
-            new("Total", r => Format.Compact(r.Healing)),
-            new("Overheal", r => Format.Percent(r.OverhealRate)),
-            new("Crit", r => Format.Percent(r.HealCritRate)),
-            new("Deaths", r => r.Deaths.ToString()),
-        ],
-        _ =>
-        [
-            new("Name", r => r.Name),
-            new("DPS", r => r.Dps.ToString("N0")),
-            new("D%", r => Format.Percent(r.DamageShare)),
-            new("Total", r => Format.Compact(r.Damage)),
-            new("Crit", r => Format.Percent(r.CritRate)),
-            new("DH", r => Format.Percent(r.DirectHitRate)),
-            new("Max hit", r => r.MaxHit.ToString("N0"), r => plugin.Names.Action(r.MaxHitActionId)),
-            new("Deaths", r => r.Deaths.ToString()),
-        ],
-    };
+    /// <summary>Name, then the tab's columns as configured in settings (see <see cref="MeterColumns"/>).</summary>
+    private Column[] ColumnsFor(MeterTab tab) =>
+    [
+        new("name", "Name", r => r.Name),
+        .. MeterColumns.Resolve(Config.MeterColumns.GetValueOrDefault(tab), tab).Select(c => new Column(c.Id, c.Header, c.Value,
+            c.Id == "maxHit" ? r => plugin.Names.Action(r.MaxHitActionId) : null)),
+    ];
 
     /// <summary>The value each tab sorts by and sizes its gauges against.</summary>
     private static long MainMetric(CombatantRow row, MeterTab tab) => tab switch
@@ -430,7 +403,7 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
                 for (var i = 1; i < columns.Length; i++)
                 {
                     ImGui.TableNextColumn();
-                    if (columns[i].Header == "Deaths")
+                    if (columns[i].Id == "deaths")
                     {
                         var x = ImGui.GetCursorScreenPos().X;
                         deathsCell = (x, x + ImGui.GetContentRegionAvail().X);
@@ -439,7 +412,7 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
                     Widgets.RightText(columns[i].Value(row), i == 1 ? Theme.Bright : Theme.Muted);
                     if (columns[i].Tooltip?.Invoke(row) is { Length: > 0 } tooltip && ImGui.IsItemHovered())
                         ImGui.SetTooltip(tooltip);
-                    if (columns[i].Header == "Deaths" && row.Deaths > 0 && ImGui.IsItemHovered())
+                    if (columns[i].Id == "deaths" && row.Deaths > 0 && ImGui.IsItemHovered())
                         ImGui.SetTooltip("Death recap");
                 }
 
