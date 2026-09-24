@@ -31,24 +31,62 @@ public static class HostShell
             Process.Start(new ProcessStartInfo("explorer.exe", $"\"{windowsPath}\"") { UseShellExecute = true });
     }
 
+    public static void OpenUrl(string url)
+    {
+        if (IsWine.Value)
+            StartUnix("/usr/bin/xdg-open", url);
+        else
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+    }
+
+    /// <summary>
+    /// Starts a program: a Windows .exe directly, anything else (e.g. the Linux AppImage of the
+    /// FFLogs Uploader) as a Linux program. Accepts Linux paths or Wine paths (Z:\...).
+    /// </summary>
+    public static void Launch(string path)
+    {
+        if (path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+        {
+            var exe = path.StartsWith('/') && IsWine.Value ? ToWindowsPath(path) : path;
+            Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(exe) ?? "" });
+            return;
+        }
+
+        if (!IsWine.Value)
+            throw new InvalidOperationException("Only .exe files can be launched outside Wine.");
+
+        // The game runs with NoNewPrivs, which every child inherits and which stops AppImages from
+        // mounting themselves (fusermount is setuid). systemd-run starts the program from the user's
+        // systemd instead, outside the game's process tree. Without systemd, run the AppImage unmounted.
+        const string script =
+            "if command -v systemd-run >/dev/null 2>&1; then exec systemd-run --user --quiet --collect \"$0\"; " +
+            "else APPIMAGE_EXTRACT_AND_RUN=1 exec \"$0\"; fi";
+        StartUnix("/bin/sh", "-c", script, path.StartsWith('/') ? path : ToUnixPath(path));
+    }
+
     /// <summary>Runs a Linux program from inside Wine (cmd's <c>start /unix</c>).</summary>
-    private static void StartUnix(string unixExecutable, string argument)
+    private static void StartUnix(string unixExecutable, params string[] arguments)
     {
         var info = new ProcessStartInfo("cmd.exe") { UseShellExecute = false, CreateNoWindow = true };
-        foreach (var arg in new[] { "/c", "start", "", "/unix", unixExecutable, argument })
+        foreach (var arg in new[] { "/c", "start", "", "/unix", unixExecutable }.Concat(arguments))
             info.ArgumentList.Add(arg);
         Process.Start(info);
     }
 
     /// <summary>Wine path → Linux path, via Wine's own winepath tool.</summary>
-    private static string ToUnixPath(string windowsPath)
+    private static string ToUnixPath(string windowsPath) => WinePath("-u", windowsPath);
+
+    /// <summary>Linux path → Wine path.</summary>
+    private static string ToWindowsPath(string unixPath) => WinePath("-w", unixPath);
+
+    private static string WinePath(string direction, string path)
     {
         var info = new ProcessStartInfo("winepath.exe") { UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true };
-        info.ArgumentList.Add("-u");
-        info.ArgumentList.Add(windowsPath);
+        info.ArgumentList.Add(direction);
+        info.ArgumentList.Add(path);
         using var process = Process.Start(info)!;
-        var unixPath = process.StandardOutput.ReadToEnd().Trim();
+        var converted = process.StandardOutput.ReadToEnd().Trim();
         process.WaitForExit(2000);
-        return string.IsNullOrEmpty(unixPath) ? windowsPath : unixPath;
+        return string.IsNullOrEmpty(converted) ? path : converted;
     }
 }

@@ -1,5 +1,6 @@
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface.ImGuiFileDialog;
 using Dalamud.Interface.Windowing;
 using Studium.Platform;
 using Studium.Core;
@@ -9,6 +10,7 @@ namespace Studium.Windows;
 public sealed class SettingsWindow : Window
 {
     private readonly Plugin plugin;
+    private readonly FileDialogManager fileDialog = new();
     private volatile bool storageStatsDirty = true;
     private string storageStats = string.Empty;
     private Configuration Config => plugin.Configuration;
@@ -45,6 +47,7 @@ public sealed class SettingsWindow : Window
         }
 
         ImGui.EndTabBar();
+        fileDialog.Draw();
     }
 
     private void DrawMeterTab()
@@ -166,21 +169,22 @@ public sealed class SettingsWindow : Window
         ImGui.TextDisabled(plugin.History.Directory);
     }
 
-    private static void OpenFolder(string path)
-    {
-        // Off the game thread: winepath and process start can take a moment.
+    private static void OpenFolder(string path) => RunHostAction($"open {path}", () => HostShell.OpenFolder(path));
+
+    /// <summary>Off the game thread: winepath and process start can take a moment. Failures go to chat.</summary>
+    private static void RunHostAction(string what, Action action) =>
         Task.Run(() =>
         {
             try
             {
-                HostShell.OpenFolder(path);
+                action();
             }
             catch (Exception ex)
             {
-                Plugin.Log.Error(ex, $"Failed to open {path}");
+                Plugin.Log.Error(ex, $"Failed to {what}");
+                Plugin.ChatGui.PrintError($"[Studium] Couldn't {what}: {ex.Message}");
             }
         });
-    }
 
     private void DrawFflogsTab()
     {
@@ -197,21 +201,45 @@ public sealed class SettingsWindow : Window
         ImGui.TextDisabled("IINACT is required for writing FFLogs network logs.");
 
         ImGui.Spacing();
+        ImGui.TextUnformatted("FFLogs Uploader:");
         var path = Config.UploaderPath;
-        ImGui.SetNextItemWidth(-1);
-        if (ImGui.InputTextWithHint("##uploaderPath", "FFLogs Uploader path (.exe or AppImage)", ref path, 512))
+        var browseWidth = ImGui.CalcTextSize("Browse...").X + (ImGui.GetStyle().FramePadding.X * 2);
+        ImGui.SetNextItemWidth(-browseWidth - ImGui.GetStyle().ItemSpacing.X);
+        if (ImGui.InputTextWithHint("##uploaderPath", ".exe, or the Linux AppImage", ref path, 512))
         {
             Config.UploaderPath = path.Trim();
             Config.Save();
         }
-
-        using (Disabled(true))
+        ImGui.SameLine();
+        if (ImGui.Button("Browse..."))
         {
-            ImGui.Button("Launch Uploader");
-            ImGui.SameLine();
-            ImGui.Button("Open my FFLogs page");
+            fileDialog.OpenFileDialog("Select the FFLogs Uploader", "Programs{.exe,.AppImage},.*", (ok, selected) =>
+            {
+                if (!ok)
+                    return;
+                Config.UploaderPath = selected;
+                Config.Save();
+            });
         }
-        ImGui.TextDisabled("These buttons arrive in a later update.");
+
+        ImGui.Spacing();
+        using (Disabled(string.IsNullOrWhiteSpace(Config.UploaderPath)))
+        {
+            if (ImGui.Button("Launch Uploader"))
+                RunHostAction("launch the FFLogs Uploader", () => HostShell.Launch(Config.UploaderPath));
+        }
+        if (string.IsNullOrWhiteSpace(Config.UploaderPath) && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("Set the Uploader path first.");
+
+        ImGui.SameLine();
+        var url = plugin.Fights.CurrentFflogsUrl;
+        using (Disabled(url == null))
+        {
+            if (ImGui.Button("Open my FFLogs page") && url != null)
+                RunHostAction("open FFLogs", () => HostShell.OpenUrl(url));
+        }
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(url ?? "Log in to a character first.");
     }
 
     private static bool Checkbox(string label, Func<bool> get, Action<bool> set)

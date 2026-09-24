@@ -3,6 +3,7 @@ using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Game.DutyState;
 using Dalamud.Plugin.Services;
+using Studium.Core;
 using Studium.Core.Combat;
 using Studium.Core.Fights;
 
@@ -74,6 +75,18 @@ public sealed class FightService : ICombatWorld, IDisposable
     }
 
     public uint LocalPlayerId => objectTable.LocalPlayer?.EntityId ?? 0;
+
+    /// <summary>The logged-in character's FFLogs page, or null when logged out or the region is unknown.</summary>
+    public string? CurrentFflogsUrl
+    {
+        get
+        {
+            if (objectTable.LocalPlayer is not { } me || me.HomeWorld.ValueNullable is not { } world)
+                return null;
+            var region = world.DataCenter.ValueNullable?.Region.RowId ?? 0;
+            return FflogsLinks.CharacterUrl(region, world.Name.ExtractText(), me.Name.TextValue);
+        }
+    }
 
     /// <summary>"Name @ World" of the logged-in character (matches HistoryFilter.CharacterKey), or null.</summary>
     public string? CurrentCharacterKey =>

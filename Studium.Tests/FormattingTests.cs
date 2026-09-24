@@ -45,3 +45,25 @@ public class FormatTests
     [Fact]
     public void Percent() => Assert.Equal("32%", Studium.Core.Format.Percent(0.3249));
 }
+
+public class FflogsLinksTests
+{
+    [Fact]
+    public void CharacterUrl() =>
+        Assert.Equal("https://www.fflogs.com/character/eu/moogle/Iluay%20Dory",
+            Studium.Core.FflogsLinks.CharacterUrl(3, "Moogle", "Iluay Dory"));
+
+    [Theory]
+    [InlineData(1u, "jp")]
+    [InlineData(2u, "na")]
+    [InlineData(4u, "oc")]
+    [InlineData(7u, "na")]
+    public void Regions(uint id, string slug) => Assert.Equal(slug, Studium.Core.FflogsLinks.RegionSlug(id));
+
+    [Fact]
+    public void UnknownRegionOrMissingDataGivesNoUrl()
+    {
+        Assert.Null(Studium.Core.FflogsLinks.CharacterUrl(0, "Moogle", "Iluay Dory"));
+        Assert.Null(Studium.Core.FflogsLinks.CharacterUrl(3, "", "Iluay Dory"));
+    }
+}
