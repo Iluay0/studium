@@ -6,7 +6,7 @@ namespace Studium;
 [Serializable]
 public class Configuration : IPluginConfiguration
 {
-    public int Version { get; set; } = 1;
+    public int Version { get; set; } = 2;
 
     // Meter
     public bool MeterOpen { get; set; } = true;
@@ -27,12 +27,24 @@ public class Configuration : IPluginConfiguration
     /// <summary>When off, saved fights are kept forever and the retention slider is ignored.</summary>
     public bool AutoDeleteFights { get; set; } = true;
     public bool SkipShortFights { get; set; } = true;
-    public int SkipShortFightsSeconds { get; set; } = 10;
+    public int SkipShortFightsSeconds { get; set; } = 30;
     public int HideShortFightsSeconds { get; set; } = 15;
     public int SessionGapHours { get; set; } = 4;
 
     // FFLogs
     public string UploaderPath { get; set; } = string.Empty;
+
+    /// <summary>Brings older saved configs up to date. Returns true if anything changed.</summary>
+    public bool Migrate()
+    {
+        if (Version >= 2)
+            return false;
+        // v2: the skip-short-fights default went from 10 s to 30 s; move users still on the old default.
+        if (SkipShortFightsSeconds == 10)
+            SkipShortFightsSeconds = 30;
+        Version = 2;
+        return true;
+    }
 
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 }

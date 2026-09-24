@@ -8,6 +8,7 @@ using Dalamud.Interface.Textures;
 using Dalamud.Interface.Windowing;
 using Studium.Core;
 using Studium.Core.Fights;
+using Studium.Core.History;
 
 namespace Studium.Windows;
 
@@ -20,6 +21,8 @@ public sealed class MeterWindow : Window, IDisposable
 
     private readonly Plugin plugin;
     private readonly IFontHandle headerFont;
+    /// <summary>A past fight picked from the dropdown or history; null shows the live/last fight.</summary>
+    private Fight? viewedFight;
     private bool restoreSavedTab = true;
     private bool? appliedLock;
     private bool? appliedClickThrough;
@@ -56,7 +59,12 @@ public sealed class MeterWindow : Window, IDisposable
 
     public override void Draw()
     {
-        var fight = plugin.Fights.Tracker.Displayed;
+        var tracker = plugin.Fights.Tracker;
+        // A running fight takes over the meter. While it's on hold (out of combat, may still resume),
+        // a past fight can be picked; if combat resumes, the meter goes back to live.
+        if (tracker.Current is { HeldAt: null })
+            viewedFight = null;
+        var fight = viewedFight ?? tracker.Current ?? tracker.Last;
         var now = DateTime.UtcNow;
         var summary = fight != null ? FightView.Summarize(fight, now, Config.MergePets) : null;
 
@@ -99,40 +107,48 @@ public sealed class MeterWindow : Window, IDisposable
 
     private bool ClickThroughConfigured => Config.LockMeter && Config.ClickThroughWhenLocked;
 
+    /// <summary>
+    /// Timer on the left; fight name (the fight picker) and zone stacked beside it, cut to fit
+    /// before the buttons on the right.
+    /// </summary>
     private void DrawHeader(Fight? fight, DateTime now)
     {
+        var style = ImGui.GetStyle();
         var rowTop = ImGui.GetCursorPosY();
-        float rowHeight;
-        using (headerFont.Push())
-        {
-            ImGui.TextUnformatted(fight != null ? Format.Duration(fight.Duration(now)) : "00:00");
-            rowHeight = ImGui.GetItemRectSize().Y;
-        }
+        var lineHeight = ImGui.GetTextLineHeight();
+        var timerText = fight != null ? Format.Duration(fight.Duration(now)) : "00:00";
 
-        // Fight name in the normal font, vertically centred on the larger timer.
-        var textY = rowTop + ((rowHeight - ImGui.GetTextLineHeight()) / 2);
+        Vector2 timerSize;
+        using (headerFont.Push())
+            timerSize = ImGui.CalcTextSize(timerText);
+        var textBlockHeight = lineHeight * 2;
+        var rowHeight = Math.Max(timerSize.Y, textBlockHeight);
+
+        ImGui.SetCursorPosY(rowTop + ((rowHeight - timerSize.Y) / 2));
+        using (headerFont.Push())
+            ImGui.TextUnformatted(timerText);
+
         ImGui.SameLine();
-        ImGui.SetCursorPosY(textY);
-        ImGui.TextUnformatted(fight?.Name ?? "No fight yet");
+        var textX = ImGui.GetCursorPosX();
+        var buttons = new[] { FontAwesomeIcon.History, FontAwesomeIcon.Cog };
+        var buttonsWidth = buttons.Sum(IconButtonWidth) + (style.ItemSpacing.X * (buttons.Length - 1));
+        var buttonsX = ImGui.GetContentRegionMax().X - buttonsWidth;
+        var textWidth = buttonsX - textX - style.ItemSpacing.X;
+
+        var blockTop = rowTop + ((rowHeight - textBlockHeight) / 2);
+        var name = fight?.Name ?? "No fight yet";
         if (fight is { IsActive: false, Outcome: not FightOutcome.Unknown })
-        {
-            ImGui.SameLine();
-            ImGui.SetCursorPosY(textY);
-            ImGui.TextUnformatted(fight.Outcome == FightOutcome.Clear ? "· Clear" : "· Wipe");
-        }
+            name += fight.Outcome == FightOutcome.Clear ? " · Clear" : " · Wipe";
+
+        ImGui.SetCursorPos(new Vector2(textX, blockTop));
+        DrawFightPicker(fight, name, textWidth);
         if (!string.IsNullOrEmpty(fight?.Zone))
         {
-            ImGui.SameLine();
-            ImGui.SetCursorPosY(textY);
-            ImGui.TextDisabled(fight.Zone);
+            ImGui.SetCursorPos(new Vector2(textX, blockTop + lineHeight));
+            ImGui.TextDisabled(Truncate(fight.Zone, textWidth));
         }
 
-        var buttons = new[] { FontAwesomeIcon.History, FontAwesomeIcon.Cog };
-        var spacing = ImGui.GetStyle().ItemSpacing.X;
-        var buttonsWidth = buttons.Sum(IconButtonWidth) + (spacing * (buttons.Length - 1));
-        ImGui.SameLine(ImGui.GetContentRegionMax().X - buttonsWidth);
-        ImGui.SetCursorPosY(rowTop + ((rowHeight - ImGui.GetFrameHeight()) / 2));
-
+        ImGui.SetCursorPos(new Vector2(buttonsX, rowTop + ((rowHeight - ImGui.GetFrameHeight()) / 2)));
         if (ImGuiComponents.IconButton("##history", FontAwesomeIcon.History))
             plugin.OpenHistory();
         if (ImGui.IsItemHovered())
@@ -144,7 +160,94 @@ public sealed class MeterWindow : Window, IDisposable
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Settings");
 
-        ImGui.SetCursorPosY(rowTop + rowHeight + ImGui.GetStyle().ItemSpacing.Y);
+        ImGui.SetCursorPosY(rowTop + rowHeight + style.ItemSpacing.Y);
+    }
+
+    /// <summary>Cuts text to fit a width, ending in "...".</summary>
+    private static string Truncate(string text, float maxWidth)
+    {
+        if (ImGui.CalcTextSize(text).X <= maxWidth)
+            return text;
+        for (var length = text.Length - 1; length > 0; length--)
+        {
+            var candidate = text[..length].TrimEnd() + "...";
+            if (ImGui.CalcTextSize(candidate).X <= maxWidth)
+                return candidate;
+        }
+        return string.Empty;
+    }
+
+    /// <summary>Shows a past fight in the meter (from the history browser).</summary>
+    public void View(Fight fight)
+    {
+        viewedFight = fight;
+        IsOpen = true;
+    }
+
+    /// <summary>Stops showing a fight that was just deleted.</summary>
+    public void Forget(Guid fightId)
+    {
+        if (viewedFight?.Id == fightId)
+            viewedFight = null;
+    }
+
+    /// <summary>The fight name doubles as the fight dropdown: this play session's fights for this character.</summary>
+    private void DrawFightPicker(Fight? shown, string label, float maxWidth)
+    {
+        // Name plus a caret icon, as one clickable area. The icon comes from the icon font: the
+        // default font has no reliable arrow glyph.
+        var caret = FontAwesomeIcon.CaretDown.ToIconString();
+        float caretWidth;
+        using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
+            caretWidth = ImGui.CalcTextSize(caret).X;
+        var spacing = ImGui.GetStyle().ItemInnerSpacing.X;
+        var name = Truncate(label, Math.Max(maxWidth - spacing - caretWidth, 0));
+        var nameSize = new Vector2(ImGui.CalcTextSize(name).X, ImGui.GetTextLineHeight());
+
+        var start = ImGui.GetCursorPos();
+        if (ImGui.Selectable("##fightPicker", false, ImGuiSelectableFlags.None, new Vector2(nameSize.X + spacing + caretWidth, nameSize.Y)))
+            ImGui.OpenPopup("##fights");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Switch fight");
+        var end = ImGui.GetCursorPos();
+
+        ImGui.SetCursorPos(start);
+        ImGui.TextUnformatted(name);
+        ImGui.SameLine(0, spacing);
+        using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
+            ImGui.TextDisabled(caret);
+        ImGui.SetCursorPos(end);
+
+        if (!ImGui.BeginPopup("##fights"))
+            return;
+
+        var tracker = plugin.Fights.Tracker;
+        if (tracker.Current is { } live && ImGui.Selectable($"LIVE  {live.Name}  {Format.Duration(live.Duration(DateTime.UtcNow))}", shown == live))
+            viewedFight = null;
+
+        var character = plugin.Fights.CurrentCharacterKey;
+        var candidates = plugin.History.Entries.Where(e =>
+            (character == null || HistoryFilter.CharacterKey(e) == character)
+            && e.DurationSeconds >= Config.HideShortFightsSeconds);
+        var fights = PlaySessions.DropdownFights(candidates, DateTime.UtcNow, TimeSpan.FromHours(Config.SessionGapHours));
+
+        if (fights.Count == 0 && tracker.Current == null)
+            ImGui.TextDisabled("No fights yet this session.");
+
+        foreach (var entry in fights)
+        {
+            var outcome = entry.Outcome switch
+            {
+                FightOutcome.Clear => "  clear",
+                FightOutcome.Wipe => "  wipe",
+                _ => string.Empty,
+            };
+            var text = $"{entry.Start.ToLocalTime():HH:mm}  {entry.Name}  {Format.Duration(TimeSpan.FromSeconds(entry.DurationSeconds))}{outcome}##{entry.Id}";
+            if (ImGui.Selectable(text, shown?.Id == entry.Id) && plugin.History.Open(entry.Id) is { } picked)
+                viewedFight = picked == tracker.Last ? null : picked;
+        }
+
+        ImGui.EndPopup();
     }
 
     private static float IconButtonWidth(FontAwesomeIcon icon)

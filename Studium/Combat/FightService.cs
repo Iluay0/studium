@@ -75,6 +75,12 @@ public sealed class FightService : ICombatWorld, IDisposable
 
     public uint LocalPlayerId => objectTable.LocalPlayer?.EntityId ?? 0;
 
+    /// <summary>"Name @ World" of the logged-in character (matches HistoryFilter.CharacterKey), or null.</summary>
+    public string? CurrentCharacterKey =>
+        objectTable.LocalPlayer is { } me
+            ? $"{me.Name.TextValue} @ {me.HomeWorld.ValueNullable?.Name.ExtractText() ?? string.Empty}"
+            : null;
+
     private void OnEvent(CombatEvent e) => Tracker.Handle(e);
 
     private void OnFrameworkUpdate(IFramework _)

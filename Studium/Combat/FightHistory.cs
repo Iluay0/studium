@@ -17,7 +17,10 @@ public sealed class FightHistory : IDisposable
     private readonly IFramework framework;
     private readonly IPluginLog log;
     private readonly List<Fight> sessionFights = new();
+    private readonly Dictionary<Guid, FightIndexEntry> sessionEntries = new();
     private DateTime nextRetention = DateTime.MinValue;
+    private volatile bool entriesDirty = true;
+    private IReadOnlyList<FightIndexEntry> entries = [];
 
     public FightStore Store { get; }
     public string Directory { get; }
@@ -36,6 +39,7 @@ public sealed class FightHistory : IDisposable
 
         tracker.FightEnded += OnFightEnded;
         framework.Update += OnFrameworkUpdate;
+        Store.Changed += () => entriesDirty = true;
     }
 
     public void Dispose()
@@ -53,9 +57,46 @@ public sealed class FightHistory : IDisposable
             return;
 
         sessionFights.Add(fight);
+        sessionEntries[fight.Id] = FightIndexEntry.From(fight);
+        entriesDirty = true;
         if (SaveToDisk)
             RunInBackground("save fight", () => Store.Save(fight));
     }
+
+    /// <summary>
+    /// Every known fight, newest first: saved ones plus this session's unsaved ones.
+    /// Cached; rebuilt only after a change. Call from the game thread.
+    /// </summary>
+    public IReadOnlyList<FightIndexEntry> Entries
+    {
+        get
+        {
+            if (!entriesDirty)
+                return entries;
+            entriesDirty = false;
+            var merged = Store.Entries.ToDictionary(e => e.Id);
+            foreach (var (id, entry) in sessionEntries)
+                merged.TryAdd(id, entry);
+            entries = merged.Values.OrderByDescending(e => e.Start).ToList();
+            return entries;
+        }
+    }
+
+    /// <summary>A fight by ID: from memory if it's from this session, else read from disk.</summary>
+    public Fight? Open(Guid id) => sessionFights.FirstOrDefault(f => f.Id == id) ?? Store.Load(id);
+
+    public bool IsSaved(Guid id) => Store.Entries.Any(e => e.Id == id);
+
+    public void Delete(Guid id)
+    {
+        sessionFights.RemoveAll(f => f.Id == id);
+        sessionEntries.Remove(id);
+        entriesDirty = true;
+        RunInBackground("delete fight", () => Store.Delete(id));
+    }
+
+    public void SetPinned(Guid id, bool pinned) =>
+        RunInBackground("pin fight", () => Store.SetPinned(id, pinned));
 
     private void OnFrameworkUpdate(IFramework _)
     {

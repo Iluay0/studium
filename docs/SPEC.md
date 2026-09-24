@@ -50,7 +50,7 @@ Reference implementations (read only, never copy verbatim):
 - **Name:** the main enemy's name (the highest-HP hostile target engaged), plus the zone.
 
 ### Meter window (kagerou-style)
-- **Header:** timer, encounter name, outcome, zone, fight dropdown, then buttons for history 🕘, settings ⚙ and collapse.
+- **Header:** large timer on the left; beside it, fight name (the fight dropdown) with outcome, and the zone on a second line, both cut to fit; history 🕘 and settings ⚙ buttons on the right. Collapse is the native title-bar arrow.
 - **Fight dropdown:**
   - Lists the fights of the current **play session**. A new session starts after an idle gap of 4 h or more (configurable), so a session can cross midnight.
   - If the session has fewer than N fights (default 15), it fills up with the most recent earlier fights.
@@ -58,6 +58,7 @@ Reference implementations (read only, never copy verbatim):
   - Shows the current character only.
   - Hides fights shorter than the hide threshold.
   - Has **no** "browse history" entry; that's the header button.
+  - Opened by clicking the fight name in the header. Picking a past fight shows it in the meter; when a new fight starts, the meter switches back to live.
 - **Tabs:**
   - **DPS:** Name, DPS, D%, Total, Crit%, DH%, Max hit, Deaths.
   - **Tank:** Name, Taken, T%, Parry%, Block%, Healed-on, Deaths.
@@ -97,7 +98,7 @@ All options live here, never in the meter.
   - **Retention slider:** 0–720 h with an hours/days unit toggle. Default 168 h (7 days).
     - `0` = this session only: new fights are kept in memory and never written to disk. Fights saved earlier are left alone (not wiped), so an accidental slide to 0 loses nothing.
   - **Automatically delete saved fights:** on by default, shown above the slider. When off, fights are kept forever and the slider is greyed out.
-  - **Skip fights shorter than X s:** on by default, X = 10. Skipped fights are not saved at all.
+  - **Skip fights shorter than X s:** on by default, X = 30. Skipped fights are not saved at all.
   - **Hide fights shorter than Y s in lists:** default 15.
   - **Session split idle gap:** default 4 h.
   - Retention cleanup runs at startup and hourly. Pinned fights are never deleted.

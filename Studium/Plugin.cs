@@ -35,6 +35,7 @@ public sealed class Plugin : IDalamudPlugin
     public SettingsWindow SettingsWindow { get; }
     public DebugWindow DebugWindow { get; }
     public DrillDownWindow DrillDownWindow { get; }
+    public HistoryWindow HistoryWindow { get; }
     public GameCombatEventSource CombatEvents { get; }
     public GameNames Names { get; }
     public FightService Fights { get; }
@@ -43,6 +44,8 @@ public sealed class Plugin : IDalamudPlugin
     public Plugin()
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+        if (Configuration.Migrate())
+            Configuration.Save();
 
         Names = new GameNames(DataManager);
         CombatEvents = new GameCombatEventSource(GameInterop, ObjectTable, Log);
@@ -58,10 +61,12 @@ public sealed class Plugin : IDalamudPlugin
             SettingsWindow = new SettingsWindow(this);
             DebugWindow = new DebugWindow(CombatEvents, ObjectTable, PartyList, Names);
             DrillDownWindow = new DrillDownWindow(this);
+            HistoryWindow = new HistoryWindow(this);
             windowSystem.AddWindow(MeterWindow);
             windowSystem.AddWindow(SettingsWindow);
             windowSystem.AddWindow(DebugWindow);
             windowSystem.AddWindow(DrillDownWindow);
+            windowSystem.AddWindow(HistoryWindow);
 
             foreach (var command in Commands)
             {
@@ -109,8 +114,11 @@ public sealed class Plugin : IDalamudPlugin
         SettingsWindow.BringToFront();
     }
 
-    public void OpenHistory() =>
-        ChatGui.Print("[Studium] The history browser isn't built yet.");
+    public void OpenHistory()
+    {
+        HistoryWindow.IsOpen = true;
+        HistoryWindow.BringToFront();
+    }
 
     private void OnCommand(string command, string args)
     {
