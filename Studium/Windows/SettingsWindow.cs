@@ -20,7 +20,7 @@ public sealed class SettingsWindow : Window
     {
         this.plugin = plugin;
         plugin.History.Store.Changed += () => storageStatsDirty = true;
-        Size = new Vector2(520, 420);
+        Size = new Vector2(560, 430);
         SizeCondition = ImGuiCond.FirstUseEver;
     }
 
@@ -29,95 +29,122 @@ public sealed class SettingsWindow : Window
         if (!ImGui.BeginTabBar("##settingsTabs"))
             return;
 
-        if (ImGui.BeginTabItem("Meter"))
-        {
-            DrawMeterTab();
-            ImGui.EndTabItem();
-        }
-
-        if (ImGui.BeginTabItem("History"))
-        {
-            DrawHistoryTab();
-            ImGui.EndTabItem();
-        }
-
-        if (ImGui.BeginTabItem("FFLogs"))
-        {
-            DrawFflogsTab();
-            ImGui.EndTabItem();
-        }
+        Tab("Window", DrawWindowTab);
+        Tab("Display", DrawDisplayTab);
+        Tab("Columns", DrawColumnsTab);
+        Tab("History", DrawHistoryTab);
+        Tab("FFLogs", DrawFflogsTab);
 
         ImGui.EndTabBar();
         fileDialog.Draw();
     }
 
-    private void DrawMeterTab()
+    private void Tab(string label, Func<bool> draw)
+    {
+        if (!ImGui.BeginTabItem(label))
+            return;
+        ImGui.Spacing();
+        if (draw())
+            Config.Save();
+        ImGui.EndTabItem();
+    }
+
+    private bool DrawWindowTab()
     {
         var changed = false;
 
-        ImGui.TextUnformatted("Show meter:");
-        changed |= EnumRadio("Always", MeterVisibility.Always, () => Config.Visibility, v => Config.Visibility = v);
-        ImGui.SameLine();
-        changed |= EnumRadio("In combat", MeterVisibility.InCombat, () => Config.Visibility, v => Config.Visibility = v);
-        ImGui.SameLine();
-        changed |= EnumRadio("In duty", MeterVisibility.InDuty, () => Config.Visibility, v => Config.Visibility = v);
-        changed |= Checkbox("Hide in cutscenes", () => Config.HideInCutscenes, v => Config.HideInCutscenes = v);
-
-        ImGui.Spacing();
-        changed |= Checkbox("Lock position and size", () => Config.LockMeter, v => Config.LockMeter = v);
-        using (Disabled(!Config.LockMeter))
+        using (Section("Visibility"))
         {
-            changed |= Checkbox("Click-through when locked", () => Config.ClickThroughWhenLocked, v => Config.ClickThroughWhenLocked = v);
-        }
-        if (Config.LockMeter && Config.ClickThroughWhenLocked)
-            ImGui.TextDisabled("The meter ignores the mouse. Hold Ctrl to interact with it.");
+            Row("Show meter");
+            changed |= EnumRadio("Always", MeterVisibility.Always, () => Config.Visibility, v => Config.Visibility = v);
+            ImGui.SameLine();
+            changed |= EnumRadio("In combat", MeterVisibility.InCombat, () => Config.Visibility, v => Config.Visibility = v);
+            ImGui.SameLine();
+            changed |= EnumRadio("In duty", MeterVisibility.InDuty, () => Config.Visibility, v => Config.Visibility = v);
 
-        var opacity = Configuration.ClampOpacity(Config.BackgroundOpacity) * 100f;
-        if (ImGui.SliderFloat("Background opacity", ref opacity, Configuration.MinOpacity * 100f, 100f, "%.0f%%"))
-        {
-            Config.BackgroundOpacity = Configuration.ClampOpacity(opacity / 100f);
-            changed = true;
+            Row("Cutscenes");
+            changed |= Checkbox("Hide in cutscenes", () => Config.HideInCutscenes, v => Config.HideInCutscenes = v);
         }
 
+        using (Section("Behaviour"))
+        {
+            Row("Position");
+            changed |= Checkbox("Lock position and size", () => Config.LockMeter, v => Config.LockMeter = v);
+
+            Row("Mouse");
+            using (Disabled(!Config.LockMeter))
+                changed |= Checkbox("Click-through when locked", () => Config.ClickThroughWhenLocked, v => Config.ClickThroughWhenLocked = v);
+            if (Config.LockMeter && Config.ClickThroughWhenLocked)
+                ImGui.TextDisabled("Hold Ctrl to interact with the meter.");
+
+            Row("Background");
+            var opacity = Configuration.ClampOpacity(Config.BackgroundOpacity) * 100f;
+            ImGui.SetNextItemWidth(200);
+            if (ImGui.SliderFloat("##opacity", ref opacity, Configuration.MinOpacity * 100f, 100f, "%.0f%% opacity"))
+            {
+                Config.BackgroundOpacity = Configuration.ClampOpacity(opacity / 100f);
+                changed = true;
+            }
+        }
+
+        return changed;
+    }
+
+    private bool DrawDisplayTab()
+    {
+        var changed = false;
+
+        using (Section("Names"))
+        {
+            Row("Style");
+            changed |= EnumRadio("Full", NameDisplay.Full, () => Config.NameDisplay, v => Config.NameDisplay = v);
+            ImGui.SameLine();
+            changed |= EnumRadio("Iluay D.", NameDisplay.SurnameInitial, () => Config.NameDisplay, v => Config.NameDisplay = v);
+            ImGui.SameLine();
+            changed |= EnumRadio("I. D.", NameDisplay.Initials, () => Config.NameDisplay, v => Config.NameDisplay = v);
+
+            Row("Yourself");
+            changed |= Checkbox("Show \"YOU\" instead of my name", () => Config.YouForSelf, v => Config.YouForSelf = v);
+        }
+
+        using (Section("Rows"))
+        {
+            Row("Gauge");
+            changed |= EnumRadio("Thin underline", GaugeStyle.Underline, () => Config.GaugeStyle, v => Config.GaugeStyle = v);
+            ImGui.SameLine();
+            changed |= EnumRadio("Full-row bar", GaugeStyle.Background, () => Config.GaugeStyle, v => Config.GaugeStyle = v);
+
+            Row("Pets");
+            changed |= Checkbox("Merge pets into owner", () => Config.MergePets, v => Config.MergePets = v);
+
+            Row("Players");
+            changed |= Checkbox("Show all players", () => Config.ShowAllPlayers, v => Config.ShowAllPlayers = v);
+        }
+
+        return changed;
+    }
+
+    private bool DrawColumnsTab()
+    {
+        using (Section("Tab"))
+        {
+            Row("Columns of");
+            foreach (var (tab, label) in new[] { (MeterTab.Dps, "DPS"), (MeterTab.Tank, "Tank"), (MeterTab.Heal, "Heal") })
+            {
+                if (tab != MeterTab.Dps)
+                    ImGui.SameLine();
+                if (ImGui.RadioButton($"{label}##columnsTab", columnsTab == tab))
+                    columnsTab = tab;
+            }
+        }
+
         ImGui.Spacing();
-        ImGui.TextUnformatted("Names:");
-        changed |= EnumRadio("Full", NameDisplay.Full, () => Config.NameDisplay, v => Config.NameDisplay = v);
-        ImGui.SameLine();
-        changed |= EnumRadio("Short surname (Iluay D.)", NameDisplay.SurnameInitial, () => Config.NameDisplay, v => Config.NameDisplay = v);
-        ImGui.SameLine();
-        changed |= EnumRadio("Initials (I. D.)", NameDisplay.Initials, () => Config.NameDisplay, v => Config.NameDisplay = v);
-        changed |= Checkbox("Show \"YOU\" instead of my name", () => Config.YouForSelf, v => Config.YouForSelf = v);
-
-        ImGui.TextUnformatted("Gauge:");
-        changed |= EnumRadio("Thin underline", GaugeStyle.Underline, () => Config.GaugeStyle, v => Config.GaugeStyle = v);
-        ImGui.SameLine();
-        changed |= EnumRadio("Full-row bar", GaugeStyle.Background, () => Config.GaugeStyle, v => Config.GaugeStyle = v);
-
-        changed |= Checkbox("Merge pets into owner", () => Config.MergePets, v => Config.MergePets = v);
-
-        ImGui.Spacing();
-        ImGui.Separator();
-        changed |= DrawColumnsEditor();
-
-        if (changed)
-            Config.Save();
+        return DrawColumnsEditor();
     }
 
     /// <summary>Per-tab column picker: show/hide the tab's columns, reorder with arrows, reset to the tab's defaults.</summary>
     private bool DrawColumnsEditor()
     {
-        ImGui.TextUnformatted("Columns for the");
-        foreach (var (tab, label) in new[] { (MeterTab.Dps, "DPS"), (MeterTab.Tank, "Tank"), (MeterTab.Heal, "Heal") })
-        {
-            ImGui.SameLine();
-            if (ImGui.RadioButton($"{label}##columnsTab", columnsTab == tab))
-                columnsTab = tab;
-        }
-        ImGui.SameLine();
-        ImGui.TextUnformatted("tab");
-        ImGui.TextDisabled("Name always comes first. The first column after it stays when the meter is narrow;");
-        ImGui.TextDisabled("the others drop from the right.");
-
         var shown = MeterColumns.Resolve(Config.MeterColumns.GetValueOrDefault(columnsTab), columnsTab).Select(c => c.Id).ToList();
         var edited = new List<string>(shown);
         var changed = false;
@@ -193,57 +220,64 @@ public sealed class SettingsWindow : Window
         return changed;
     }
 
-    private void DrawHistoryTab()
+    private bool DrawHistoryTab()
     {
         var changed = false;
 
-        changed |= Checkbox("Automatically delete saved fights", () => Config.AutoDeleteFights, v => Config.AutoDeleteFights = v);
-        using (Disabled(!Config.AutoDeleteFights))
+        using (Section("Retention"))
         {
-            var unit = Config.RetentionUnit;
-            var value = RetentionPeriod.ToDisplay(Config.RetentionHours, unit);
-            ImGui.SetNextItemWidth(260);
-            if (ImGui.SliderInt("##retention", ref value, 0, RetentionPeriod.DisplayMax(unit)))
+            Row("Auto-delete");
+            changed |= Checkbox("Automatically delete saved fights", () => Config.AutoDeleteFights, v => Config.AutoDeleteFights = v);
+
+            Row("Keep fights for");
+            using (Disabled(!Config.AutoDeleteFights))
             {
-                Config.RetentionHours = RetentionPeriod.FromDisplay(value, unit);
+                var unit = Config.RetentionUnit;
+                var value = RetentionPeriod.ToDisplay(Config.RetentionHours, unit);
+                ImGui.SetNextItemWidth(160);
+                if (ImGui.SliderInt("##retention", ref value, 0, RetentionPeriod.DisplayMax(unit)))
+                {
+                    Config.RetentionHours = RetentionPeriod.FromDisplay(value, unit);
+                    changed = true;
+                }
+                ImGui.SameLine();
+                changed |= EnumRadio("days", RetentionUnit.Days, () => Config.RetentionUnit, v => Config.RetentionUnit = v);
+                ImGui.SameLine();
+                changed |= EnumRadio("hours", RetentionUnit.Hours, () => Config.RetentionUnit, v => Config.RetentionUnit = v);
+                ImGui.TextDisabled(RetentionPeriod.Describe(Config.RetentionHours));
+            }
+        }
+
+        using (Section("Short fights"))
+        {
+            Row("Don't save under");
+            changed |= Checkbox("##skipShort", () => Config.SkipShortFights, v => Config.SkipShortFights = v);
+            ImGui.SameLine();
+            using (Disabled(!Config.SkipShortFights))
+                changed |= SecondsInput("##skipShortSeconds", "s", () => Config.SkipShortFightsSeconds, v => Config.SkipShortFightsSeconds = v);
+
+            Row("Hide in lists under");
+            changed |= SecondsInput("##hideShort", "s", () => Config.HideShortFightsSeconds, v => Config.HideShortFightsSeconds = v);
+        }
+
+        using (Section("Play sessions"))
+        {
+            Row("New session after");
+            var gap = Config.SessionGapHours;
+            ImGui.SetNextItemWidth(90);
+            if (ImGui.InputInt("##sessionGap", ref gap))
+            {
+                Config.SessionGapHours = Math.Clamp(gap, 1, 24);
                 changed = true;
             }
             ImGui.SameLine();
-            changed |= EnumRadio("days", RetentionUnit.Days, () => Config.RetentionUnit, v => Config.RetentionUnit = v);
-            ImGui.SameLine();
-            changed |= EnumRadio("hours", RetentionUnit.Hours, () => Config.RetentionUnit, v => Config.RetentionUnit = v);
-            ImGui.TextDisabled($"Keep fights for: {RetentionPeriod.Describe(Config.RetentionHours)}");
+            ImGui.TextUnformatted("h idle");
         }
 
+        using (Section("Storage"))
+            DrawStorageStats();
 
-        ImGui.Spacing();
-        changed |= Checkbox("Skip fights shorter than", () => Config.SkipShortFights, v => Config.SkipShortFights = v);
-        ImGui.SameLine();
-        using (Disabled(!Config.SkipShortFights))
-        {
-            changed |= SecondsInput("##skipShort", "s (not saved at all)", () => Config.SkipShortFightsSeconds, v => Config.SkipShortFightsSeconds = v);
-        }
-
-        ImGui.TextUnformatted("Hide in lists fights shorter than");
-        ImGui.SameLine();
-        changed |= SecondsInput("##hideShort", "s", () => Config.HideShortFightsSeconds, v => Config.HideShortFightsSeconds = v);
-
-        ImGui.TextUnformatted("Start a new play session after");
-        ImGui.SameLine();
-        var gap = Config.SessionGapHours;
-        ImGui.SetNextItemWidth(80);
-        if (ImGui.InputInt("h idle##sessionGap", ref gap))
-        {
-            Config.SessionGapHours = Math.Clamp(gap, 1, 24);
-            changed = true;
-        }
-
-        ImGui.Spacing();
-        ImGui.Separator();
-        DrawStorageStats();
-
-        if (changed)
-            Config.Save();
+        return changed;
     }
 
     private void DrawStorageStats()
@@ -253,15 +287,17 @@ public sealed class SettingsWindow : Window
             storageStatsDirty = false;
             var count = plugin.History.Store.Entries.Count;
             var bytes = new DirectoryInfo(plugin.History.Directory).EnumerateFiles().Sum(f => f.Length);
-            storageStats = $"Saved fights: {count} ({bytes / 1024.0 / 1024.0:0.0} MB)";
+            storageStats = $"{count} fights ({bytes / 1024.0 / 1024.0:0.0} MB)";
         }
 
+        Row("Saved");
         ImGui.TextUnformatted(storageStats);
         ImGui.SameLine();
         if (ImGui.SmallButton("Open folder"))
             OpenFolder(plugin.History.Directory);
-        ImGui.TextDisabled($"This session: {plugin.History.SessionFights.Count} fight(s)");
-        ImGui.TextDisabled(plugin.History.Directory);
+
+        Row("This session");
+        ImGui.TextUnformatted($"{plugin.History.SessionFights.Count} fights");
     }
 
     private static void OpenFolder(string path) => RunHostAction($"open {path}", () => HostShell.OpenFolder(path));
@@ -281,60 +317,105 @@ public sealed class SettingsWindow : Window
             }
         });
 
-    private void DrawFflogsTab()
+    private bool DrawFflogsTab()
     {
-        var iinact = Plugin.PluginInterface.InstalledPlugins
-            .FirstOrDefault(p => p.InternalName == "IINACT" && p.IsLoaded);
-
-        ImGui.TextUnformatted($"IINACT detected: {(iinact != null ? "yes" : "no")}");
-        ImGui.SameLine();
-        using (Disabled(iinact == null))
+        using (Section("Network logs"))
         {
-            if (ImGui.Button("Open IINACT settings"))
-                Plugin.CommandManager.ProcessCommand("/iinact");
-        }
-        ImGui.TextDisabled("IINACT is required for writing FFLogs network logs.");
-
-        ImGui.Spacing();
-        ImGui.TextUnformatted("FFLogs Uploader:");
-        var path = Config.UploaderPath;
-        var browseWidth = ImGui.CalcTextSize("Browse...").X + (ImGui.GetStyle().FramePadding.X * 2);
-        ImGui.SetNextItemWidth(-browseWidth - ImGui.GetStyle().ItemSpacing.X);
-        if (ImGui.InputTextWithHint("##uploaderPath", ".exe, or the Linux AppImage", ref path, 512))
-        {
-            Config.UploaderPath = path.Trim();
-            Config.Save();
-        }
-        ImGui.SameLine();
-        if (ImGui.Button("Browse..."))
-        {
-            fileDialog.OpenFileDialog("Select the FFLogs Uploader", "Programs{.exe,.AppImage},.*", (ok, selected) =>
+            var iinact = Plugin.PluginInterface.InstalledPlugins.FirstOrDefault(p => p.InternalName == "IINACT" && p.IsLoaded);
+            Row("IINACT");
+            ImGui.TextUnformatted(iinact != null ? "Detected" : "Not found");
+            ImGui.SameLine();
+            using (Disabled(iinact == null))
             {
-                if (!ok)
-                    return;
-                Config.UploaderPath = selected;
+                if (ImGui.SmallButton("Open IINACT settings"))
+                    Plugin.CommandManager.ProcessCommand("/iinact");
+            }
+            ImGui.TextDisabled("IINACT writes the logs the FFLogs Uploader sends.");
+        }
+
+        using (Section("FFLogs Uploader"))
+        {
+            Row("Path");
+            var path = Config.UploaderPath;
+            var browseWidth = ImGui.CalcTextSize("Browse...").X + (ImGui.GetStyle().FramePadding.X * 2);
+            ImGui.SetNextItemWidth(-browseWidth - ImGui.GetStyle().ItemSpacing.X);
+            if (ImGui.InputTextWithHint("##uploaderPath", ".exe, or the Linux AppImage", ref path, 512))
+            {
+                Config.UploaderPath = path.Trim();
                 Config.Save();
-            });
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("Browse..."))
+            {
+                fileDialog.OpenFileDialog("Select the FFLogs Uploader", "Programs{.exe,.AppImage},.*", (ok, selected) =>
+                {
+                    if (!ok)
+                        return;
+                    Config.UploaderPath = selected;
+                    Config.Save();
+                });
+            }
+
+            Row("");
+            using (Disabled(string.IsNullOrWhiteSpace(Config.UploaderPath)))
+            {
+                if (ImGui.Button("Launch Uploader"))
+                    RunHostAction("launch the FFLogs Uploader", () => HostShell.Launch(Config.UploaderPath));
+            }
+            if (string.IsNullOrWhiteSpace(Config.UploaderPath) && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip("Set the Uploader path first.");
+
+            ImGui.SameLine();
+            var url = plugin.Fights.CurrentFflogsUrl;
+            using (Disabled(url == null))
+            {
+                if (ImGui.Button("Open my FFLogs page") && url != null)
+                    RunHostAction("open FFLogs", () => HostShell.OpenUrl(url));
+            }
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip(url ?? "Log in to a character first.");
         }
 
+        return false;
+    }
+
+    /// <summary>
+    /// A titled group of settings laid out as a form: labels in a fixed left column, controls on the right.
+    /// Dispose ends it. Use <see cref="Row"/> for each line.
+    /// </summary>
+    private static SectionScope Section(string title)
+    {
         ImGui.Spacing();
-        using (Disabled(string.IsNullOrWhiteSpace(Config.UploaderPath)))
+        ImGui.TextUnformatted(title);
+        ImGui.Separator();
+        ImGui.Spacing();
+        var open = ImGui.BeginTable($"##section{title}", 2, ImGuiTableFlags.SizingFixedFit);
+        if (open)
         {
-            if (ImGui.Button("Launch Uploader"))
-                RunHostAction("launch the FFLogs Uploader", () => HostShell.Launch(Config.UploaderPath));
+            ImGui.TableSetupColumn("label", ImGuiTableColumnFlags.WidthFixed, 130);
+            ImGui.TableSetupColumn("control", ImGuiTableColumnFlags.WidthStretch);
         }
-        if (string.IsNullOrWhiteSpace(Config.UploaderPath) && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Set the Uploader path first.");
+        return new SectionScope(open);
+    }
 
-        ImGui.SameLine();
-        var url = plugin.Fights.CurrentFflogsUrl;
-        using (Disabled(url == null))
+    /// <summary>Starts a form row: the (muted) label on the left, then the cursor moves to the control column.</summary>
+    private static void Row(string label)
+    {
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextDisabled(label);
+        ImGui.TableNextColumn();
+    }
+
+    private readonly struct SectionScope(bool open) : IDisposable
+    {
+        public void Dispose()
         {
-            if (ImGui.Button("Open my FFLogs page") && url != null)
-                RunHostAction("open FFLogs", () => HostShell.OpenUrl(url));
+            if (open)
+                ImGui.EndTable();
+            ImGui.Spacing();
         }
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip(url ?? "Log in to a character first.");
     }
 
     private static bool Checkbox(string label, Func<bool> get, Action<bool> set)

@@ -28,3 +28,9 @@ Standalone Dalamud plugin: in-game DPS meter and fight history. Commands: `/stud
 - `Studium/`: the Dalamud plugin (hooks, windows, config). Output: `Studium/bin/Debug/Studium.dll`.
 - `Studium.Core/`: game-free logic (plain `net10.0`, no Dalamud references). Anything testable goes here.
 - `Studium.Tests/`: xunit tests for `Studium.Core`.
+
+## Releasing
+- GitHub: https://github.com/Iluay0/studium (remote `origin`, branch `master`).
+- Bump `<Version>` in `Studium/Studium.csproj` and push. CI (`.github/workflows/build.yml`) tests, builds, creates a GitHub Release with `latest.zip`, and commits the updated `repo.json` to `master` itself.
+- Because CI commits to `master`, run `git pull --ff-only` before committing new work after a release.
+- Custom repo URL for Dalamud: `https://raw.githubusercontent.com/Iluay0/studium/master/repo.json` (only works while the GitHub repo is public).
