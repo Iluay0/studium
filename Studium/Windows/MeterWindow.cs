@@ -6,6 +6,7 @@ using Dalamud.Interface.GameFonts;
 using Dalamud.Interface.ManagedFontAtlas;
 using Dalamud.Interface.Windowing;
 using Studium.Core;
+using Studium.Core.Fights;
 
 namespace Studium.Windows;
 
@@ -54,12 +55,16 @@ public sealed class MeterWindow : Window, IDisposable
 
     public override void Draw()
     {
-        DrawHeader();
+        var fight = plugin.Fights.Tracker.Displayed;
+        var now = DateTime.UtcNow;
+        var summary = fight != null ? FightView.Summarize(fight, now, Config.MergePets) : null;
+
+        DrawHeader(fight, now);
         ImGui.Separator();
 
         var footerHeight = ImGui.GetFrameHeightWithSpacing() + ImGui.GetStyle().ItemSpacing.Y;
-        DrawTable(new Vector2(0, -footerHeight));
-        DrawTabBar();
+        DrawTable(new Vector2(0, -footerHeight), summary);
+        DrawTabBar(summary);
     }
 
     /// <summary>
@@ -93,20 +98,33 @@ public sealed class MeterWindow : Window, IDisposable
 
     private bool ClickThroughConfigured => Config.LockMeter && Config.ClickThroughWhenLocked;
 
-    private void DrawHeader()
+    private void DrawHeader(Fight? fight, DateTime now)
     {
         var rowTop = ImGui.GetCursorPosY();
         float rowHeight;
         using (headerFont.Push())
         {
-            ImGui.TextUnformatted("00:00");
+            ImGui.TextUnformatted(fight != null ? FormatDuration(fight.Duration(now)) : "00:00");
             rowHeight = ImGui.GetItemRectSize().Y;
         }
 
         // Fight name in the normal font, vertically centred on the larger timer.
+        var textY = rowTop + ((rowHeight - ImGui.GetTextLineHeight()) / 2);
         ImGui.SameLine();
-        ImGui.SetCursorPosY(rowTop + ((rowHeight - ImGui.GetTextLineHeight()) / 2));
-        ImGui.TextUnformatted("No fight yet");
+        ImGui.SetCursorPosY(textY);
+        ImGui.TextUnformatted(fight?.Name ?? "No fight yet");
+        if (fight is { IsActive: false, Outcome: not FightOutcome.Unknown })
+        {
+            ImGui.SameLine();
+            ImGui.SetCursorPosY(textY);
+            ImGui.TextUnformatted(fight.Outcome == FightOutcome.Clear ? "· Clear" : "· Wipe");
+        }
+        if (!string.IsNullOrEmpty(fight?.Zone))
+        {
+            ImGui.SameLine();
+            ImGui.SetCursorPosY(textY);
+            ImGui.TextDisabled(fight.Zone);
+        }
 
         var buttons = new[] { FontAwesomeIcon.History, FontAwesomeIcon.Cog };
         var spacing = ImGui.GetStyle().ItemSpacing.X;
@@ -134,14 +152,53 @@ public sealed class MeterWindow : Window, IDisposable
             return ImGui.CalcTextSize(icon.ToIconString()).X + (ImGui.GetStyle().FramePadding.X * 2);
     }
 
-    private void DrawTable(Vector2 size)
+    private sealed record Column(string Header, Func<CombatantRow, string> Value, Func<CombatantRow, string?>? Tooltip = null);
+
+    private Column[] ColumnsFor(MeterTab tab) => tab switch
     {
-        var columns = Config.MeterTab switch
-        {
-            MeterTab.Tank => new[] { "Name", "Taken", "Taken%", "Parry", "Block", "Healed-on", "Deaths" },
-            MeterTab.Heal => new[] { "Name", "H%", "HPS", "Total", "Overheal", "Crit", "Deaths" },
-            _ => new[] { "Name", "D%", "DPS", "Total", "Crit", "DH", "Max hit", "Deaths" },
-        };
+        MeterTab.Tank =>
+        [
+            new("Name", r => r.Name),
+            new("Taken", r => Compact(r.DamageTaken)),
+            new("Taken%", r => Percent(r.DamageTakenShare)),
+            new("Parry", r => Percent(r.ParryRate)),
+            new("Block", r => Percent(r.BlockRate)),
+            new("Healed-on", r => Compact(r.HealingReceived)),
+            new("Deaths", r => r.Deaths.ToString()),
+        ],
+        MeterTab.Heal =>
+        [
+            new("Name", r => r.Name),
+            new("H%", r => Percent(r.HealingShare)),
+            new("HPS", r => r.Hps.ToString("N0")),
+            new("Total", r => Compact(r.Healing)),
+            new("Overheal", _ => "—"),
+            new("Crit", r => Percent(r.HealCritRate)),
+            new("Deaths", r => r.Deaths.ToString()),
+        ],
+        _ =>
+        [
+            new("Name", r => r.Name),
+            new("D%", r => Percent(r.DamageShare)),
+            new("DPS", r => r.Dps.ToString("N0")),
+            new("Total", r => Compact(r.Damage)),
+            new("Crit", r => Percent(r.CritRate)),
+            new("DH", r => Percent(r.DirectHitRate)),
+            new("Max hit", r => r.MaxHit.ToString("N0"), r => plugin.Names.Action(r.MaxHitActionId)),
+            new("Deaths", r => r.Deaths.ToString()),
+        ],
+    };
+
+    private static IEnumerable<CombatantRow> Sorted(IEnumerable<CombatantRow> rows, MeterTab tab) => tab switch
+    {
+        MeterTab.Tank => rows.OrderByDescending(r => r.DamageTaken),
+        MeterTab.Heal => rows.OrderByDescending(r => r.Healing),
+        _ => rows.OrderByDescending(r => r.Damage),
+    };
+
+    private void DrawTable(Vector2 size, FightSummary? summary)
+    {
+        var columns = ColumnsFor(Config.MeterTab);
 
         var tableTopLeft = ImGui.GetCursorScreenPos();
         var tableSize = ImGui.GetContentRegionAvail() + size; // size.Y is negative: space kept for the tab bar
@@ -152,14 +209,48 @@ public sealed class MeterWindow : Window, IDisposable
         for (var i = 0; i < columns.Length; i++)
         {
             var flags = i == 0 ? ImGuiTableColumnFlags.WidthStretch : ImGuiTableColumnFlags.WidthFixed;
-            ImGui.TableSetupColumn(columns[i], flags);
+            ImGui.TableSetupColumn(columns[i].Header, flags);
         }
         ImGui.TableHeadersRow();
+
+        var localId = plugin.Fights.LocalPlayerId;
+        if (summary != null)
+        {
+            foreach (var row in Sorted(summary.Rows, Config.MeterTab))
+            {
+                ImGui.TableNextRow();
+                if (row.Id == localId)
+                    ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg0, ImGui.GetColorU32(ImGuiCol.Header));
+
+                foreach (var column in columns)
+                {
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(column.Value(row));
+                    if (column.Tooltip?.Invoke(row) is { Length: > 0 } tooltip && ImGui.IsItemHovered())
+                        ImGui.SetTooltip(tooltip);
+                }
+            }
+        }
+
         ImGui.EndTable();
 
-        // Placeholder until the combat hooks exist: centred over the whole table, not inside a column.
-        DrawCentredText("Waiting for combat…", tableTopLeft, tableSize);
+        // Centred over the whole table, not inside a column.
+        if (summary == null)
+            DrawCentredText("Waiting for combat…", tableTopLeft, tableSize);
     }
+
+    private static string FormatDuration(TimeSpan duration) =>
+        duration.TotalHours >= 1 ? duration.ToString(@"h\:mm\:ss") : duration.ToString(@"mm\:ss");
+
+    private static string Percent(double share) => $"{share * 100:0}%";
+
+    /// <summary>1,234 · 12.3k · 1.23M</summary>
+    private static string Compact(long value) => value switch
+    {
+        < 10_000 => value.ToString("N0"),
+        < 1_000_000 => $"{value / 1000.0:0.0}k",
+        _ => $"{value / 1_000_000.0:0.00}M",
+    };
 
     private static void DrawCentredText(string text, Vector2 topLeft, Vector2 area)
     {
@@ -168,7 +259,7 @@ public sealed class MeterWindow : Window, IDisposable
         ImGui.GetWindowDrawList().AddText(position, ImGui.GetColorU32(ImGuiCol.TextDisabled), text);
     }
 
-    private void DrawTabBar()
+    private void DrawTabBar(FightSummary? summary)
     {
         var lineStart = ImGui.GetCursorPos();
 
@@ -194,7 +285,7 @@ public sealed class MeterWindow : Window, IDisposable
         }
 
         // Raid totals sit on the tab bar's line, right-aligned.
-        var raidText = "raid 0 dps · 0 hps";
+        var raidText = $"raid {summary?.RaidDps ?? 0:N0} dps · {summary?.RaidHps ?? 0:N0} hps";
         if (Config.MeterTab == MeterTab.Heal)
             raidText += " (excl. shields)";
         var textWidth = ImGui.CalcTextSize(raidText).X;

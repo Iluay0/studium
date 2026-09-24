@@ -22,6 +22,10 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IObjectTable ObjectTable { get; private set; } = null!;
     [PluginService] internal static IPartyList PartyList { get; private set; } = null!;
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
+    [PluginService] internal static IFramework Framework { get; private set; } = null!;
+    [PluginService] internal static ICondition Condition { get; private set; } = null!;
+    [PluginService] internal static IDutyState DutyState { get; private set; } = null!;
+    [PluginService] internal static IClientState ClientState { get; private set; } = null!;
 
     public Configuration Configuration { get; }
 
@@ -30,30 +34,46 @@ public sealed class Plugin : IDalamudPlugin
     public SettingsWindow SettingsWindow { get; }
     public DebugWindow DebugWindow { get; }
     public GameCombatEventSource CombatEvents { get; }
+    public GameNames Names { get; }
+    public FightService Fights { get; }
 
     public Plugin()
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
 
-        MeterWindow = new MeterWindow(this) { IsOpen = Configuration.MeterOpen };
-        SettingsWindow = new SettingsWindow(this);
+        Names = new GameNames(DataManager);
         CombatEvents = new GameCombatEventSource(GameInterop, ObjectTable, Log);
-        DebugWindow = new DebugWindow(CombatEvents, ObjectTable, PartyList, DataManager);
-        windowSystem.AddWindow(MeterWindow);
-        windowSystem.AddWindow(SettingsWindow);
-        windowSystem.AddWindow(DebugWindow);
 
-        foreach (var command in Commands)
+        // Hooks are live from here on; if anything below fails, release them so the game isn't left hooked.
+        try
         {
-            CommandManager.AddHandler(command, new CommandInfo(OnCommand)
-            {
-                HelpMessage = "Toggle the meter. Subcommands: config, history.",
-            });
-        }
+            Fights = new FightService(CombatEvents, Framework, Condition, ObjectTable, PartyList, DutyState, ClientState, Names);
 
-        PluginInterface.UiBuilder.Draw += windowSystem.Draw;
-        PluginInterface.UiBuilder.OpenMainUi += ToggleMeter;
-        PluginInterface.UiBuilder.OpenConfigUi += OpenSettings;
+            MeterWindow = new MeterWindow(this) { IsOpen = Configuration.MeterOpen };
+            SettingsWindow = new SettingsWindow(this);
+            DebugWindow = new DebugWindow(CombatEvents, ObjectTable, PartyList, Names);
+            windowSystem.AddWindow(MeterWindow);
+            windowSystem.AddWindow(SettingsWindow);
+            windowSystem.AddWindow(DebugWindow);
+
+            foreach (var command in Commands)
+            {
+                CommandManager.AddHandler(command, new CommandInfo(OnCommand)
+                {
+                    HelpMessage = "Toggle the meter. Subcommands: config, history.",
+                });
+            }
+
+            PluginInterface.UiBuilder.Draw += windowSystem.Draw;
+            PluginInterface.UiBuilder.OpenMainUi += ToggleMeter;
+            PluginInterface.UiBuilder.OpenConfigUi += OpenSettings;
+        }
+        catch
+        {
+            (Fights as IDisposable)?.Dispose();
+            CombatEvents.Dispose();
+            throw;
+        }
     }
 
     public void Dispose()
@@ -68,6 +88,7 @@ public sealed class Plugin : IDalamudPlugin
         windowSystem.RemoveAllWindows();
         MeterWindow.Dispose();
         DebugWindow.Dispose();
+        Fights.Dispose();
         CombatEvents.Dispose();
     }
 

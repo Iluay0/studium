@@ -4,7 +4,6 @@ using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
 using Studium.Combat;
 using Studium.Core.Combat;
-using LuminaAction = Lumina.Excel.Sheets.Action;
 
 namespace Studium.Windows;
 
@@ -18,22 +17,21 @@ public sealed class DebugWindow : Window, IDisposable
     private readonly GameCombatEventSource source;
     private readonly IObjectTable objectTable;
     private readonly IPartyList partyList;
-    private readonly IDataManager dataManager;
+    private readonly GameNames names;
 
     private readonly LinkedList<CombatEvent> events = new();
     private readonly Dictionary<Type, int> eventCounts = new();
     private readonly Dictionary<uint, (int Count, ActorControlRecord Last)> actorControlCategories = new();
-    private readonly Dictionary<uint, string> actionNames = new();
     private bool paused;
     private bool partyOnly = true;
 
-    public DebugWindow(GameCombatEventSource source, IObjectTable objectTable, IPartyList partyList, IDataManager dataManager)
+    public DebugWindow(GameCombatEventSource source, IObjectTable objectTable, IPartyList partyList, GameNames names)
         : base("Studium – Combat debug###StudiumDebug")
     {
         this.source = source;
         this.objectTable = objectTable;
         this.partyList = partyList;
-        this.dataManager = dataManager;
+        this.names = names;
         Size = new Vector2(820, 480);
         SizeCondition = ImGuiCond.FirstUseEver;
 
@@ -197,12 +195,8 @@ public sealed class DebugWindow : Window, IDisposable
 
     private string ActionName(uint actionId)
     {
-        if (actionNames.TryGetValue(actionId, out var name))
-            return name;
-        var row = dataManager.GetExcelSheet<LuminaAction>().GetRowOrDefault(actionId);
-        name = row is { } r && !r.Name.IsEmpty ? $"{r.Name.ExtractText()} ({actionId})" : actionId.ToString();
-        actionNames[actionId] = name;
-        return name;
+        var name = names.Action(actionId);
+        return string.IsNullOrEmpty(name) ? actionId.ToString() : $"{name} ({actionId})";
     }
 
     private HashSet<uint> PartyIds()
