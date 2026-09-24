@@ -34,6 +34,7 @@ public sealed class Plugin : IDalamudPlugin
     public MeterWindow MeterWindow { get; }
     public SettingsWindow SettingsWindow { get; }
     public DebugWindow DebugWindow { get; }
+    public DrillDownWindow DrillDownWindow { get; }
     public GameCombatEventSource CombatEvents { get; }
     public GameNames Names { get; }
     public FightService Fights { get; }
@@ -53,9 +54,11 @@ public sealed class Plugin : IDalamudPlugin
             MeterWindow = new MeterWindow(this) { IsOpen = Configuration.MeterOpen };
             SettingsWindow = new SettingsWindow(this);
             DebugWindow = new DebugWindow(CombatEvents, ObjectTable, PartyList, Names);
+            DrillDownWindow = new DrillDownWindow(this);
             windowSystem.AddWindow(MeterWindow);
             windowSystem.AddWindow(SettingsWindow);
             windowSystem.AddWindow(DebugWindow);
+            windowSystem.AddWindow(DrillDownWindow);
 
             foreach (var command in Commands)
             {

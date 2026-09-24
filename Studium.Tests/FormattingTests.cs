@@ -25,3 +25,23 @@ public class FormattingTests
         Assert.Equal(0u, Jobs.IconId(0));
     }
 }
+
+public class FormatTests
+{
+    [Theory]
+    [InlineData(9_999, "9,999")]
+    [InlineData(39_300, "39.3k")]
+    [InlineData(14_840_000, "14.84M")]
+    public void Compact(long value, string expected) =>
+        Assert.Equal(expected, Studium.Core.Format.Compact(value));
+
+    [Fact]
+    public void Durations()
+    {
+        Assert.Equal("08:42", Studium.Core.Format.Duration(new TimeSpan(0, 8, 42)));
+        Assert.Equal("1:02:03", Studium.Core.Format.Duration(new TimeSpan(1, 2, 3)));
+    }
+
+    [Fact]
+    public void Percent() => Assert.Equal("32%", Studium.Core.Format.Percent(0.3249));
+}

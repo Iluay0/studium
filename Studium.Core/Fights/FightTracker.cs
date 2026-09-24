@@ -129,6 +129,7 @@ public sealed class FightTracker
                     attacker.MaxHit = hit.Amount;
                     attacker.MaxHitActionId = hit.ActionId;
                 }
+                Ability(attacker.DamageAbilities, hit.ActionId).Add(hit.Amount, hit.Crit, hit.DirectHit);
                 AddEnemyDamage(hit.TargetId, hit.Amount);
             }
 
@@ -137,6 +138,7 @@ public sealed class FightTracker
                 var victim = Stats(hit.TargetId);
                 victim.DamageTaken += hit.Amount;
                 victim.HitsTaken++;
+                Ability(victim.TakenAbilities, hit.ActionId).Add(hit.Amount, hit.Crit, hit.DirectHit);
                 if (hit.Kind == HitKind.ParriedDamage)
                     victim.Parried++;
                 if (hit.Kind == HitKind.BlockedDamage)
@@ -159,6 +161,7 @@ public sealed class FightTracker
                     healer.HealHits++;
                     if (hit.Crit)
                         healer.HealCrits++;
+                    Ability(healer.HealAbilities, hit.ActionId).Add(hit.Amount, hit.Crit, overheal: hit.Overheal);
                 }
                 if (targetIsAlly)
                     Stats(hit.TargetId).HealingReceived += hit.Amount;
@@ -184,6 +187,7 @@ public sealed class FightTracker
                 var healer = Stats(tick.SourceId, tick.SourceOwnerId);
                 healer.Healing += tick.Amount;
                 healer.Overheal += tick.Overheal;
+                Ability(healer.HealAbilities, AbilityStats.HotKey).Add(tick.Amount, overheal: tick.Overheal);
             }
             if (targetIsAlly)
                 Stats(tick.TargetId).HealingReceived += tick.Amount;
@@ -198,10 +202,15 @@ public sealed class FightTracker
             var attacker = Stats(tick.SourceId, tick.SourceOwnerId);
             attacker.Damage += tick.Amount;
             attacker.DotDamage += tick.Amount;
+            Ability(attacker.DamageAbilities, AbilityStats.DotKey).Add(tick.Amount);
             AddEnemyDamage(tick.TargetId, tick.Amount);
         }
         if (targetIsAlly && !sourceIsAlly)
-            Stats(tick.TargetId).DamageTaken += tick.Amount;
+        {
+            var victim = Stats(tick.TargetId);
+            victim.DamageTaken += tick.Amount;
+            Ability(victim.TakenAbilities, AbilityStats.DotKey).Add(tick.Amount);
+        }
     }
 
     /// <summary>Starts a fight if this damage is between an ally and a non-ally. Returns whether a fight is running.</summary>
@@ -243,6 +252,16 @@ public sealed class FightTracker
         }
 
         return stats;
+    }
+
+    private static AbilityStats Ability(Dictionary<uint, AbilityStats> abilities, uint key)
+    {
+        if (!abilities.TryGetValue(key, out var ability))
+        {
+            ability = new AbilityStats();
+            abilities[key] = ability;
+        }
+        return ability;
     }
 
     private void AddEnemyDamage(uint enemyId, long amount)

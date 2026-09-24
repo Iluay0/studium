@@ -40,6 +40,40 @@ public sealed class CombatantStats
     public int Blocked { get; set; }
     public long HealingReceived { get; set; }
     public int Deaths { get; set; }
+
+    // Per-ability breakdowns, keyed by action ID (or AbilityStats.DotKey / HotKey for ticks).
+    public Dictionary<uint, AbilityStats> DamageAbilities { get; } = new();
+    public Dictionary<uint, AbilityStats> HealAbilities { get; } = new();
+    /// <summary>Damage this combatant took, keyed by the enemy's action.</summary>
+    public Dictionary<uint, AbilityStats> TakenAbilities { get; } = new();
+}
+
+public sealed class AbilityStats
+{
+    /// <summary>DoT ticks don't say which DoT they belong to, so all of a player's DoT ticks share one row.</summary>
+    public const uint DotKey = uint.MaxValue - 1;
+    public const uint HotKey = uint.MaxValue - 2;
+
+    public long Total { get; set; }
+    public int Hits { get; set; }
+    public int Crits { get; set; }
+    public int DirectHits { get; set; }
+    public long Max { get; set; }
+    public long Overheal { get; set; }
+
+    public static bool IsTick(uint key) => key is DotKey or HotKey;
+
+    public void Add(long amount, bool crit = false, bool directHit = false, long overheal = 0)
+    {
+        Total += amount;
+        Hits++;
+        if (crit)
+            Crits++;
+        if (directHit)
+            DirectHits++;
+        Max = Math.Max(Max, amount);
+        Overheal += overheal;
+    }
 }
 
 public sealed class Fight

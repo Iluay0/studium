@@ -1,3 +1,4 @@
+using Studium.Core;
 using Studium.Core.Combat;
 using Studium.Core.Fights;
 
@@ -236,4 +237,60 @@ public class FightTrackerTests
     [InlineData(800, 0, 0, 0)] // unknown HP: assume none
     public void OverhealEstimate(long amount, uint current, uint max, long expected) =>
         Assert.Equal(expected, Overheal.Estimate(amount, current, max));
+
+    [Fact]
+    public void DamageBreakdownPerAbility()
+    {
+        tracker.Handle(Hit(0, Me, Boss, 100, crit: true, action: 1));
+        tracker.Handle(Hit(1, Me, Boss, 300, dh: true, action: 1));
+        tracker.Handle(Hit(2, Me, Boss, 600, action: 2));
+        tracker.Handle(new PeriodicTickEvent(T0.AddSeconds(3), Me, 0, Boss, false, 50));
+        tracker.Handle(new PeriodicTickEvent(T0.AddSeconds(6), Me, 0, Boss, false, 50));
+
+        var rows = FightView.Abilities(tracker.Current!, Me, MeterTab.Dps, mergePets: true);
+        Assert.Equal([2u, 1u, AbilityStats.DotKey], rows.Select(r => r.ActionId));
+
+        var first = rows.Single(r => r.ActionId == 1);
+        Assert.Equal(400, first.Total);
+        Assert.Equal(2, first.Hits);
+        Assert.Equal(0.5, first.CritRate);
+        Assert.Equal(0.5, first.DirectHitRate);
+        Assert.Equal(200, first.Average);
+        Assert.Equal(300, first.Max);
+        Assert.Equal(400.0 / 1100, first.Share, 3);
+
+        var dot = rows.Single(r => r.IsTick);
+        Assert.Equal(100, dot.Total);
+        Assert.Equal(2, dot.Hits);
+    }
+
+    [Fact]
+    public void MergedPetAbilitiesAreLabelledWithThePet()
+    {
+        tracker.Handle(Hit(0, Me, Boss, 1000, action: 1));
+        tracker.Handle(Hit(1, MyPet, Boss, 500, owner: Me, action: 9));
+
+        var merged = FightView.Abilities(tracker.Current!, Me, MeterTab.Dps, mergePets: true);
+        Assert.Contains(merged, r => r.ActionId == 9 && r.PetName == "Eos");
+        Assert.Contains(merged, r => r.ActionId == 1 && r.PetName == null);
+
+        var split = FightView.Abilities(tracker.Current!, Me, MeterTab.Dps, mergePets: false);
+        Assert.Single(split);
+    }
+
+    [Fact]
+    public void HealAndTakenBreakdowns()
+    {
+        tracker.Handle(Hit(0, Boss, Me, 1000, action: 500));
+        tracker.Handle(new PeriodicTickEvent(T0.AddSeconds(1), Boss, 0, Me, false, 100));
+        tracker.Handle(Hit(1, Healer, Me, 800, HitKind.Heal, action: 20) with { Overheal = 200 });
+        tracker.Handle(new PeriodicTickEvent(T0.AddSeconds(2), Healer, 0, Me, true, 100, Overheal: 100));
+
+        var heals = FightView.Abilities(tracker.Current!, Healer, MeterTab.Heal, mergePets: true);
+        Assert.Equal(0.25, heals.Single(r => r.ActionId == 20).OverhealRate);
+        Assert.Equal(1.0, heals.Single(r => r.ActionId == AbilityStats.HotKey).OverhealRate);
+
+        var taken = FightView.Abilities(tracker.Current!, Me, MeterTab.Tank, mergePets: true);
+        Assert.Equal([500u, AbilityStats.DotKey], taken.Select(r => r.ActionId));
+    }
 }

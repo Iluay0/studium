@@ -64,7 +64,7 @@ public sealed class MeterWindow : Window, IDisposable
         ImGui.Separator();
 
         var footerHeight = ImGui.GetFrameHeightWithSpacing() + ImGui.GetStyle().ItemSpacing.Y;
-        DrawTable(new Vector2(0, -footerHeight), summary);
+        DrawTable(new Vector2(0, -footerHeight), fight, summary);
         DrawTabBar(summary);
     }
 
@@ -105,7 +105,7 @@ public sealed class MeterWindow : Window, IDisposable
         float rowHeight;
         using (headerFont.Push())
         {
-            ImGui.TextUnformatted(fight != null ? FormatDuration(fight.Duration(now)) : "00:00");
+            ImGui.TextUnformatted(fight != null ? Format.Duration(fight.Duration(now)) : "00:00");
             rowHeight = ImGui.GetItemRectSize().Y;
         }
 
@@ -160,31 +160,31 @@ public sealed class MeterWindow : Window, IDisposable
         MeterTab.Tank =>
         [
             new("Name", r => r.Name),
-            new("Taken", r => Compact(r.DamageTaken)),
-            new("T%", r => Percent(r.DamageTakenShare)),
-            new("Parry", r => Percent(r.ParryRate)),
-            new("Block", r => Percent(r.BlockRate)),
-            new("Healed-on", r => Compact(r.HealingReceived)),
+            new("Taken", r => Format.Compact(r.DamageTaken)),
+            new("T%", r => Format.Percent(r.DamageTakenShare)),
+            new("Parry", r => Format.Percent(r.ParryRate)),
+            new("Block", r => Format.Percent(r.BlockRate)),
+            new("Healed-on", r => Format.Compact(r.HealingReceived)),
             new("Deaths", r => r.Deaths.ToString()),
         ],
         MeterTab.Heal =>
         [
             new("Name", r => r.Name),
             new("HPS", r => r.Hps.ToString("N0")),
-            new("H%", r => Percent(r.HealingShare)),
-            new("Total", r => Compact(r.Healing)),
-            new("Overheal", r => Percent(r.OverhealRate)),
-            new("Crit", r => Percent(r.HealCritRate)),
+            new("H%", r => Format.Percent(r.HealingShare)),
+            new("Total", r => Format.Compact(r.Healing)),
+            new("Overheal", r => Format.Percent(r.OverhealRate)),
+            new("Crit", r => Format.Percent(r.HealCritRate)),
             new("Deaths", r => r.Deaths.ToString()),
         ],
         _ =>
         [
             new("Name", r => r.Name),
             new("DPS", r => r.Dps.ToString("N0")),
-            new("D%", r => Percent(r.DamageShare)),
-            new("Total", r => Compact(r.Damage)),
-            new("Crit", r => Percent(r.CritRate)),
-            new("DH", r => Percent(r.DirectHitRate)),
+            new("D%", r => Format.Percent(r.DamageShare)),
+            new("Total", r => Format.Compact(r.Damage)),
+            new("Crit", r => Format.Percent(r.CritRate)),
+            new("DH", r => Format.Percent(r.DirectHitRate)),
             new("Max hit", r => r.MaxHit.ToString("N0"), r => plugin.Names.Action(r.MaxHitActionId)),
             new("Deaths", r => r.Deaths.ToString()),
         ],
@@ -228,7 +228,7 @@ public sealed class MeterWindow : Window, IDisposable
         return columns[..count];
     }
 
-    private void DrawTable(Vector2 size, FightSummary? summary)
+    private void DrawTable(Vector2 size, Fight? fight, FightSummary? summary)
     {
         var tableTopLeft = ImGui.GetCursorScreenPos();
         var tableSize = ImGui.GetContentRegionAvail() + size; // size.Y is negative: space kept for the tab bar
@@ -248,7 +248,7 @@ public sealed class MeterWindow : Window, IDisposable
         ImGui.TableHeadersRow();
 
         var localId = plugin.Fights.LocalPlayerId;
-        if (summary != null)
+        if (fight != null && summary != null)
         {
             var tab = Config.MeterTab;
             var rows = summary.Rows.OrderByDescending(r => MainMetric(r, tab)).ToList();
@@ -263,6 +263,13 @@ public sealed class MeterWindow : Window, IDisposable
 
                 ImGui.TableNextColumn();
                 DrawGauge(row, (double)MainMetric(row, tab) / top, tableTopLeft.X, tableSize.X, rowHeight);
+
+                // Invisible full-row selectable: hover feedback, and a click opens the breakdown.
+                var cellStart = ImGui.GetCursorPos();
+                if (ImGui.Selectable($"##row{row.Id}", false, ImGuiSelectableFlags.SpanAllColumns | ImGuiSelectableFlags.AllowItemOverlap, new Vector2(0, lineHeight)))
+                    plugin.DrillDownWindow.Show(fight, row.Id, tab);
+                ImGui.SetCursorPos(cellStart);
+
                 DrawNameCell(row, isSelf, lineHeight);
 
                 foreach (var column in columns.Skip(1))
@@ -328,19 +335,6 @@ public sealed class MeterWindow : Window, IDisposable
     private static uint ToImGuiColor(uint rgb, byte alpha) =>
         ((uint)alpha << 24) | ((rgb & 0xFF) << 16) | (rgb & 0xFF00) | ((rgb >> 16) & 0xFF);
 
-    private static string FormatDuration(TimeSpan duration) =>
-        duration.TotalHours >= 1 ? duration.ToString(@"h\:mm\:ss") : duration.ToString(@"mm\:ss");
-
-    private static string Percent(double share) => $"{share * 100:0}%";
-
-    /// <summary>1,234 · 12.3k · 1.23M</summary>
-    private static string Compact(long value) => value switch
-    {
-        < 10_000 => value.ToString("N0"),
-        < 1_000_000 => $"{value / 1000.0:0.0}k",
-        _ => $"{value / 1_000_000.0:0.00}M",
-    };
-
     private static void DrawCentredText(string text, Vector2 topLeft, Vector2 area)
     {
         var textSize = ImGui.CalcTextSize(text);
@@ -393,7 +387,7 @@ public sealed class MeterWindow : Window, IDisposable
         var hps = summary?.RaidHps ?? 0;
         var isHeal = Config.MeterTab == MeterTab.Heal;
         var tabNumber = isHeal ? $"{hps:N0} hps" : $"{dps:N0} dps";
-        var compactNumber = isHeal ? $"{Compact((long)hps)} hps" : $"{Compact((long)dps)} dps";
+        var compactNumber = isHeal ? $"{Format.Compact((long)hps)} hps" : $"{Format.Compact((long)dps)} dps";
 
         (bool, string)[] candidates =
         [

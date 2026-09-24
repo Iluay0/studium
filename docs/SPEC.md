@@ -74,7 +74,8 @@ Reference implementations (read only, never copy verbatim):
 ### Drill-down window
 - **Header:** the player's job, name, fight and duration, plus a summary: DPS, total, crit%, DH%, deaths.
 - **Per-ability table:** Ability, Total, %, Hits, Crit%, DH%, Avg, Max.
-- DoTs, auto-attacks and pets appear as their own ability rows.
+- DoTs, auto-attacks and pets appear as their own ability rows. The game's tick packets don't say which DoT/HoT they belong to, so all of a player's DoT ticks share one "DoT ticks" row (same for HoTs).
+- The breakdown follows the tab it was opened from: damage dealt (DPS), healing with overheal (Heal), or damage taken by enemy ability (Tank).
 
 ### History browser
 - Fights grouped by play session, newest first. Sessions can be collapsed.
@@ -141,4 +142,4 @@ All options live here, never in the meter.
 7. Fight dropdown (play sessions) and history browser (filters, pin, delete).
 8. FFLogs section: IINACT detection, Uploader launch, FFLogs page link.
 9. Visibility rules, lock, click-through, opacity.
-10. Visual polish: custom styling for header buttons, tabs, rows and gauges (the user expects this pass; until then use stock ImGui widgets).
+10. Visual polish: custom styling for header buttons, tabs, rows and gauges (the user expects this pass; until then use stock ImGui widgets). Known items: meter row hover colour (theme purple looks ugly), own-row highlight, header overlap at narrow widths, drill-down window (skill icons, per-ability gauges).
