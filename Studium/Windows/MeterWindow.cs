@@ -15,8 +15,8 @@ public sealed class MeterWindow : Window, IDisposable
 {
     private const string WindowId = "###StudiumMeter";
 
-    private static readonly (MeterTab Tab, string Label)[] Tabs =
-        [(MeterTab.Dps, "DPS"), (MeterTab.Tank, "Tank"), (MeterTab.Heal, "Heal")];
+    private static readonly (MeterTab Tab, string Label, string ShortLabel)[] Tabs =
+        [(MeterTab.Dps, "DPS", "D"), (MeterTab.Tank, "Tank", "T"), (MeterTab.Heal, "Heal", "H")];
 
     private readonly Plugin plugin;
     private readonly IFontHandle headerFont;
@@ -31,7 +31,7 @@ public sealed class MeterWindow : Window, IDisposable
         headerFont = Plugin.PluginInterface.UiBuilder.FontAtlas.NewGameFontHandle(new GameFontStyle(GameFontFamilyAndSize.Axis18));
         Size = new Vector2(560, 260);
         SizeCondition = ImGuiCond.FirstUseEver;
-        SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(320, 80) };
+        SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(160, 132) };
 
         // Dalamud only honours IsPinned/IsClickthrough while these are on. They also add Dalamud's
         // title-bar menu (☰), which is the escape hatch out of click-through; PreDraw syncs it with our config.
@@ -161,7 +161,7 @@ public sealed class MeterWindow : Window, IDisposable
         [
             new("Name", r => r.Name),
             new("Taken", r => Compact(r.DamageTaken)),
-            new("Taken%", r => Percent(r.DamageTakenShare)),
+            new("T%", r => Percent(r.DamageTakenShare)),
             new("Parry", r => Percent(r.ParryRate)),
             new("Block", r => Percent(r.BlockRate)),
             new("Healed-on", r => Compact(r.HealingReceived)),
@@ -170,8 +170,8 @@ public sealed class MeterWindow : Window, IDisposable
         MeterTab.Heal =>
         [
             new("Name", r => r.Name),
-            new("H%", r => Percent(r.HealingShare)),
             new("HPS", r => r.Hps.ToString("N0")),
+            new("H%", r => Percent(r.HealingShare)),
             new("Total", r => Compact(r.Healing)),
             new("Overheal", r => Percent(r.OverhealRate)),
             new("Crit", r => Percent(r.HealCritRate)),
@@ -180,8 +180,8 @@ public sealed class MeterWindow : Window, IDisposable
         _ =>
         [
             new("Name", r => r.Name),
-            new("D%", r => Percent(r.DamageShare)),
             new("DPS", r => r.Dps.ToString("N0")),
+            new("D%", r => Percent(r.DamageShare)),
             new("Total", r => Compact(r.Damage)),
             new("Crit", r => Percent(r.CritRate)),
             new("DH", r => Percent(r.DirectHitRate)),
@@ -198,13 +198,45 @@ public sealed class MeterWindow : Window, IDisposable
         _ => row.Damage,
     };
 
+    /// <summary>
+    /// Drops columns from the right until the table fits the window. Name and the tab's main
+    /// number (DPS / HPS / Taken) always stay.
+    /// </summary>
+    private Column[] FittingColumns(Column[] columns, IReadOnlyList<CombatantRow> rows, float available)
+    {
+        var padding = ImGui.GetStyle().CellPadding.X * 2;
+        var widths = columns.Select((column, i) =>
+        {
+            var width = ImGui.CalcTextSize(column.Header).X;
+            foreach (var row in rows)
+            {
+                var text = i == 0 ? NameFormatter.Format(row.Name, false, Config.NameDisplay, false) : column.Value(row);
+                width = Math.Max(width, ImGui.CalcTextSize(text).X);
+            }
+            if (i == 0)
+                width += ImGui.GetTextLineHeight() + ImGui.GetStyle().ItemSpacing.X; // job icon
+            return width + padding;
+        }).ToArray();
+
+        var count = columns.Length;
+        var total = widths.Sum();
+        while (count > 2 && total > available)
+        {
+            count--;
+            total -= widths[count];
+        }
+        return columns[..count];
+    }
+
     private void DrawTable(Vector2 size, FightSummary? summary)
     {
-        var columns = ColumnsFor(Config.MeterTab);
-
         var tableTopLeft = ImGui.GetCursorScreenPos();
         var tableSize = ImGui.GetContentRegionAvail() + size; // size.Y is negative: space kept for the tab bar
-        if (!ImGui.BeginTable("##meter", columns.Length, ImGuiTableFlags.ScrollY | ImGuiTableFlags.SizingStretchProp, size))
+        var available = tableSize.X - ImGui.GetStyle().ScrollbarSize;
+        var columns = FittingColumns(ColumnsFor(Config.MeterTab), summary?.Rows ?? [], available);
+
+        // The ID includes the column count so ImGui re-measures widths when a column drops or returns.
+        if (!ImGui.BeginTable($"##meter{columns.Length}", columns.Length, ImGuiTableFlags.ScrollY | ImGuiTableFlags.SizingStretchProp, size))
             return;
 
         ImGui.TableSetupScrollFreeze(0, 1);
@@ -319,15 +351,17 @@ public sealed class MeterWindow : Window, IDisposable
     private void DrawTabBar(FightSummary? summary)
     {
         var lineStart = ImGui.GetCursorPos();
+        var (shortLabels, raidText) = FitFooter(summary);
 
         if (ImGui.BeginTabBar("##meterTabs"))
         {
-            foreach (var (tab, label) in Tabs)
+            foreach (var (tab, label, shortLabel) in Tabs)
             {
                 var flags = restoreSavedTab && Config.MeterTab == tab
                     ? ImGuiTabItemFlags.SetSelected
                     : ImGuiTabItemFlags.None;
-                if (!ImGui.BeginTabItem(label, flags))
+                // ### keeps the tab's identity when its label shortens.
+                if (!ImGui.BeginTabItem($"{(shortLabels ? shortLabel : label)}###{label}", flags))
                     continue;
 
                 if (!restoreSavedTab && Config.MeterTab != tab)
@@ -342,12 +376,49 @@ public sealed class MeterWindow : Window, IDisposable
         }
 
         // Raid totals sit on the tab bar's line, right-aligned.
-        var raidText = $"raid {summary?.RaidDps ?? 0:N0} dps · {summary?.RaidHps ?? 0:N0} hps";
-        if (Config.MeterTab == MeterTab.Heal)
-            raidText += " (excl. shields)";
+        if (raidText.Length == 0)
+            return;
         var textWidth = ImGui.CalcTextSize(raidText).X;
         ImGui.SetCursorPos(new Vector2(ImGui.GetContentRegionMax().X - textWidth, lineStart.Y + ImGui.GetStyle().FramePadding.Y));
         ImGui.TextUnformatted(raidText);
+    }
+
+    /// <summary>
+    /// Picks the longest raid-total text (and tab labels) that fit beside the tabs:
+    /// full → current tab's number only → compact number → short tab labels → no raid text.
+    /// </summary>
+    private (bool ShortLabels, string RaidText) FitFooter(FightSummary? summary)
+    {
+        var dps = summary?.RaidDps ?? 0;
+        var hps = summary?.RaidHps ?? 0;
+        var isHeal = Config.MeterTab == MeterTab.Heal;
+        var tabNumber = isHeal ? $"{hps:N0} hps" : $"{dps:N0} dps";
+        var compactNumber = isHeal ? $"{Compact((long)hps)} hps" : $"{Compact((long)dps)} dps";
+
+        (bool, string)[] candidates =
+        [
+            (false, $"raid {dps:N0} dps · {hps:N0} hps" + (isHeal ? " (excl. shields)" : "")),
+            (false, $"raid {tabNumber}"),
+            (false, compactNumber),
+            (true, compactNumber),
+            (true, string.Empty),
+        ];
+
+        var available = ImGui.GetContentRegionAvail().X;
+        var gap = ImGui.GetStyle().ItemSpacing.X * 2;
+        foreach (var (shortLabels, text) in candidates)
+        {
+            var textWidth = text.Length == 0 ? 0 : ImGui.CalcTextSize(text).X + gap;
+            if (TabsWidth(shortLabels) + textWidth <= available)
+                return (shortLabels, text);
+        }
+        return (true, string.Empty);
+    }
+
+    private static float TabsWidth(bool shortLabels)
+    {
+        var style = ImGui.GetStyle();
+        return Tabs.Sum(t => ImGui.CalcTextSize(shortLabels ? t.ShortLabel : t.Label).X + (style.FramePadding.X * 2) + style.ItemInnerSpacing.X);
     }
 
     private void SetOpenState(bool open)

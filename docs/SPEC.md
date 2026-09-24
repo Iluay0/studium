@@ -59,9 +59,10 @@ Reference implementations (read only, never copy verbatim):
   - Hides fights shorter than the hide threshold.
   - Has **no** "browse history" entry; that's the header button.
 - **Tabs:**
-  - **DPS:** Name, D%, DPS, Total, Crit%, DH%, Max hit, Deaths.
-  - **Tank:** Name, Taken, Taken%, Parry%, Block%, Healed-on, Deaths.
-  - **Heal:** Name, H%, HPS, Total, Overheal%, Crit%, Deaths. Labeled "excl. shields" until shield estimation ships.
+  - **DPS:** Name, DPS, D%, Total, Crit%, DH%, Max hit, Deaths.
+  - **Tank:** Name, Taken, T%, Parry%, Block%, Healed-on, Deaths.
+  - **Heal:** Name, HPS, H%, Total, Overheal%, Crit%, Deaths. Labeled "excl. shields" until shield estimation ships.
+  - When the window is too narrow, columns drop from the right; Name and the tab's main number always stay.
 - **Rows:**
   - Game job icon (from game textures).
   - No row background highlight for yourself (the user found it distracting; revisit in the polish slice).
