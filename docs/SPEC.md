@@ -95,7 +95,7 @@ All options live here, never in the meter.
   - Gauge style.
 - **History:**
   - **Retention slider:** 0–720 h with an hours/days unit toggle. Default 168 h (7 days).
-    - `0` = this session only: fights are kept in memory and never written to disk.
+    - `0` = this session only: new fights are kept in memory and never written to disk. Fights saved earlier are left alone (not wiped), so an accidental slide to 0 loses nothing.
   - **Automatically delete saved fights:** on by default, shown above the slider. When off, fights are kept forever and the slider is greyed out.
   - **Skip fights shorter than X s:** on by default, X = 10. Skipped fights are not saved at all.
   - **Hide fights shorter than Y s in lists:** default 15.

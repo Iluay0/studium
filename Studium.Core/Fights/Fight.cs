@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Studium.Core.Fights;
 
 public enum FightOutcome
@@ -42,10 +44,10 @@ public sealed class CombatantStats
     public int Deaths { get; set; }
 
     // Per-ability breakdowns, keyed by action ID (or AbilityStats.DotKey / HotKey for ticks).
-    public Dictionary<uint, AbilityStats> DamageAbilities { get; } = new();
-    public Dictionary<uint, AbilityStats> HealAbilities { get; } = new();
+    public Dictionary<uint, AbilityStats> DamageAbilities { get; init; } = new();
+    public Dictionary<uint, AbilityStats> HealAbilities { get; init; } = new();
     /// <summary>Damage this combatant took, keyed by the enemy's action.</summary>
-    public Dictionary<uint, AbilityStats> TakenAbilities { get; } = new();
+    public Dictionary<uint, AbilityStats> TakenAbilities { get; init; } = new();
 }
 
 public sealed class AbilityStats
@@ -76,9 +78,18 @@ public sealed class AbilityStats
     }
 }
 
+public sealed class EnemyStats
+{
+    public string Name { get; set; } = string.Empty;
+    public long DamageTaken { get; set; }
+}
+
+/// <summary>Who you were and where, when a fight started.</summary>
+public sealed record FightContext(string Zone, string CharacterName, string World, uint LocalPlayerId);
+
 public sealed class Fight
 {
-    public Guid Id { get; } = Guid.NewGuid();
+    public Guid Id { get; init; } = Guid.NewGuid();
     public required DateTime Start { get; init; }
     /// <summary>Time of the last damage event.</summary>
     public DateTime LastActivity { get; set; }
@@ -92,14 +103,21 @@ public sealed class Fight
     public bool IsActive { get; set; } = true;
     public FightOutcome Outcome { get; set; }
     public string Zone { get; set; } = string.Empty;
+    public string CharacterName { get; set; } = string.Empty;
+    public string World { get; set; } = string.Empty;
+    public uint LocalPlayerId { get; set; }
 
-    public Dictionary<uint, CombatantStats> Combatants { get; } = new();
-    public Dictionary<uint, (string Name, long DamageTaken)> Enemies { get; } = new();
+    public Dictionary<uint, CombatantStats> Combatants { get; init; } = new();
+    public Dictionary<uint, EnemyStats> Enemies { get; init; } = new();
 
     /// <summary>The fight is named after the enemy that took the most damage.</summary>
+    [JsonIgnore]
     public string Name =>
-        Enemies.Count == 0 ? "Encounter" : Enemies.Values.MaxBy(e => e.DamageTaken).Name;
+        Enemies.Count == 0 ? "Encounter" : Enemies.Values.MaxBy(e => e.DamageTaken)!.Name;
 
     /// <summary>First hit until the fight ends. The live timer uses the same rule, so it never jumps when the fight ends.</summary>
+    [JsonIgnore]
+    public TimeSpan FinalDuration => Duration(EndTime ?? LastActivity);
+
     public TimeSpan Duration(DateTime now) => (IsActive ? HeldAt ?? now : EndTime ?? LastActivity) - Start;
 }

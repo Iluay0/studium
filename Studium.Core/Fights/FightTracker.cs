@@ -40,8 +40,8 @@ public sealed class FightTracker
 
     public event Action<Fight>? FightEnded;
 
-    /// <summary>Called by the plugin to name the zone when a fight starts.</summary>
-    public Func<string>? ZoneProvider { get; set; }
+    /// <summary>Called by the plugin when a fight starts, to record zone and character.</summary>
+    public Func<FightContext>? ContextProvider { get; set; }
 
     public void Handle(CombatEvent e)
     {
@@ -222,7 +222,16 @@ public sealed class FightTracker
 
         if (Current == null)
         {
-            Current = new Fight { Start = time, LastActivity = time, Zone = ZoneProvider?.Invoke() ?? string.Empty };
+            var context = ContextProvider?.Invoke();
+            Current = new Fight
+            {
+                Start = time,
+                LastActivity = time,
+                Zone = context?.Zone ?? string.Empty,
+                CharacterName = context?.CharacterName ?? string.Empty,
+                World = context?.World ?? string.Empty,
+                LocalPlayerId = context?.LocalPlayerId ?? 0,
+            };
             sawPartyInCombat = false;
         }
 
@@ -267,9 +276,13 @@ public sealed class FightTracker
     private void AddEnemyDamage(uint enemyId, long amount)
     {
         var fight = Current!;
-        var name = fight.Enemies.TryGetValue(enemyId, out var existing) && !string.IsNullOrEmpty(existing.Name)
-            ? existing.Name
-            : world.Lookup(enemyId)?.Name ?? string.Empty;
-        fight.Enemies[enemyId] = (name, existing.DamageTaken + amount);
+        if (!fight.Enemies.TryGetValue(enemyId, out var enemy))
+        {
+            enemy = new EnemyStats();
+            fight.Enemies[enemyId] = enemy;
+        }
+        if (string.IsNullOrEmpty(enemy.Name))
+            enemy.Name = world.Lookup(enemyId)?.Name ?? string.Empty;
+        enemy.DamageTaken += amount;
     }
 }

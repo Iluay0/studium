@@ -1,6 +1,7 @@
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
+using Studium.Platform;
 using Studium.Core;
 
 namespace Studium.Windows;
@@ -8,11 +9,14 @@ namespace Studium.Windows;
 public sealed class SettingsWindow : Window
 {
     private readonly Plugin plugin;
+    private volatile bool storageStatsDirty = true;
+    private string storageStats = string.Empty;
     private Configuration Config => plugin.Configuration;
 
     public SettingsWindow(Plugin plugin) : base("Studium – Settings##settings")
     {
         this.plugin = plugin;
+        plugin.History.Store.Changed += () => storageStatsDirty = true;
         Size = new Vector2(520, 420);
         SizeCondition = ImGuiCond.FirstUseEver;
     }
@@ -136,8 +140,46 @@ public sealed class SettingsWindow : Window
             changed = true;
         }
 
+        ImGui.Spacing();
+        ImGui.Separator();
+        DrawStorageStats();
+
         if (changed)
             Config.Save();
+    }
+
+    private void DrawStorageStats()
+    {
+        if (storageStatsDirty)
+        {
+            storageStatsDirty = false;
+            var count = plugin.History.Store.Entries.Count;
+            var bytes = new DirectoryInfo(plugin.History.Directory).EnumerateFiles().Sum(f => f.Length);
+            storageStats = $"Saved fights: {count} ({bytes / 1024.0 / 1024.0:0.0} MB)";
+        }
+
+        ImGui.TextUnformatted(storageStats);
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Open folder"))
+            OpenFolder(plugin.History.Directory);
+        ImGui.TextDisabled($"This session: {plugin.History.SessionFights.Count} fight(s)");
+        ImGui.TextDisabled(plugin.History.Directory);
+    }
+
+    private static void OpenFolder(string path)
+    {
+        // Off the game thread: winepath and process start can take a moment.
+        Task.Run(() =>
+        {
+            try
+            {
+                HostShell.OpenFolder(path);
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error(ex, $"Failed to open {path}");
+            }
+        });
     }
 
     private void DrawFflogsTab()

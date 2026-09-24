@@ -35,7 +35,18 @@ public sealed class FightService : ICombatWorld, IDisposable
         this.partyList = partyList;
         this.dutyState = dutyState;
 
-        Tracker = new FightTracker(this) { ZoneProvider = () => names.Zone(clientState.TerritoryType) };
+        Tracker = new FightTracker(this)
+        {
+            ContextProvider = () =>
+            {
+                var me = objectTable.LocalPlayer;
+                return new FightContext(
+                    names.Zone(clientState.TerritoryType),
+                    me?.Name.TextValue ?? string.Empty,
+                    me?.HomeWorld.ValueNullable?.Name.ExtractText() ?? string.Empty,
+                    me?.EntityId ?? 0);
+            },
+        };
 
         // Allies are filled on the first framework update: the constructor runs off the main thread,
         // where Dalamud forbids reading the object table.

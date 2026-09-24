@@ -38,6 +38,7 @@ public sealed class Plugin : IDalamudPlugin
     public GameCombatEventSource CombatEvents { get; }
     public GameNames Names { get; }
     public FightService Fights { get; }
+    public FightHistory History { get; }
 
     public Plugin()
     {
@@ -50,6 +51,8 @@ public sealed class Plugin : IDalamudPlugin
         try
         {
             Fights = new FightService(CombatEvents, Framework, Condition, ObjectTable, PartyList, DutyState, ClientState, Names);
+            History = new FightHistory(Configuration, Fights.Tracker, Framework, Log,
+                Path.Combine(PluginInterface.GetPluginConfigDirectory(), "fights"));
 
             MeterWindow = new MeterWindow(this) { IsOpen = Configuration.MeterOpen };
             SettingsWindow = new SettingsWindow(this);
@@ -74,6 +77,7 @@ public sealed class Plugin : IDalamudPlugin
         }
         catch
         {
+            (History as IDisposable)?.Dispose();
             (Fights as IDisposable)?.Dispose();
             CombatEvents.Dispose();
             throw;
@@ -92,6 +96,7 @@ public sealed class Plugin : IDalamudPlugin
         windowSystem.RemoveAllWindows();
         MeterWindow.Dispose();
         DebugWindow.Dispose();
+        History.Dispose();
         Fights.Dispose();
         CombatEvents.Dispose();
     }
