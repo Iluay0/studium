@@ -11,7 +11,15 @@ public class FightTrackerTests
 
     private sealed class FakeWorld : ICombatWorld
     {
+        public HashSet<uint> Dead { get; } = new();
+
         public bool IsAlly(uint id) => id is Me or Healer;
+
+        public HashSet<uint> Engaged { get; } = new();
+
+        public bool IsDead(uint id) => Dead.Contains(id);
+
+        public bool IsEngaged(uint id) => Engaged.Contains(id);
 
         public ActorSnapshot? Lookup(uint id) => id switch
         {
@@ -24,7 +32,10 @@ public class FightTrackerTests
         };
     }
 
-    private readonly FightTracker tracker = new(new FakeWorld());
+    private readonly FakeWorld world = new();
+    private readonly FightTracker tracker;
+
+    public FightTrackerTests() => tracker = new FightTracker(world);
 
     private static ActionHitEvent Hit(double seconds, uint source, uint target, long amount,
         HitKind kind = HitKind.Damage, bool crit = false, bool dh = false, uint owner = 0, uint action = 7406) =>
@@ -292,5 +303,144 @@ public class FightTrackerTests
 
         var taken = FightView.Abilities(tracker.Current!, Me, MeterTab.Tank, mergePets: true);
         Assert.Equal([500u, AbilityStats.DotKey], taken.Select(r => r.ActionId));
+    }
+
+    [Fact]
+    public void KillingTheMainEnemyIsAClear()
+    {
+        tracker.Handle(Hit(0, Me, Add, 100));
+        tracker.Handle(Hit(1, Me, Boss, 5000));
+        tracker.Handle(new DeathEvent(T0.AddSeconds(2), Boss, Me));
+        tracker.End(FightOutcome.Unknown, T0.AddSeconds(3));
+        Assert.Equal(FightOutcome.Clear, tracker.Last!.Outcome);
+    }
+
+    [Fact]
+    public void KillingOnlyAnAddIsNotAClear()
+    {
+        tracker.Handle(Hit(0, Me, Add, 100));
+        tracker.Handle(Hit(1, Me, Boss, 5000));
+        tracker.Handle(new DeathEvent(T0.AddSeconds(2), Add, Me));
+        tracker.End(FightOutcome.Unknown, T0.AddSeconds(3));
+        Assert.Equal(FightOutcome.Unknown, tracker.Last!.Outcome);
+    }
+
+    [Fact]
+    public void DutyWipeWinsOverAKill()
+    {
+        tracker.Handle(Hit(0, Me, Boss, 5000));
+        tracker.Handle(new DeathEvent(T0.AddSeconds(2), Boss, Me));
+        tracker.End(FightOutcome.Wipe, T0.AddSeconds(3));
+        Assert.Equal(FightOutcome.Wipe, tracker.Last!.Outcome);
+    }
+
+    [Fact]
+    public void WholePartyDeadIsAWipe()
+    {
+        tracker.Handle(Hit(0, Me, Boss, 100));
+        tracker.Handle(Hit(1, Healer, Boss, 100));
+        world.Dead.Add(Healer);
+        tracker.Handle(new DeathEvent(T0.AddSeconds(2), Healer, Boss));
+        world.Dead.Add(Me);
+        tracker.Handle(new DeathEvent(T0.AddSeconds(3), Me, Boss));
+        tracker.End(FightOutcome.Unknown, T0.AddSeconds(5));
+        Assert.Equal(FightOutcome.Wipe, tracker.Last!.Outcome);
+    }
+
+    [Fact]
+    public void SomeoneAliveIsNotAWipe()
+    {
+        tracker.Handle(Hit(0, Me, Boss, 100));
+        tracker.Handle(Hit(1, Healer, Boss, 100));
+        world.Dead.Add(Me);
+        tracker.Handle(new DeathEvent(T0.AddSeconds(2), Me, Boss));
+        tracker.End(FightOutcome.Unknown, T0.AddSeconds(5));
+        Assert.Equal(FightOutcome.Unknown, tracker.Last!.Outcome);
+    }
+
+    [Fact]
+    public void SoloDeathIsAWipeEvenAfterRespawning()
+    {
+        tracker.Handle(Hit(0, Boss, Me, 100));
+        world.Dead.Add(Me);
+        tracker.Handle(new DeathEvent(T0.AddSeconds(1), Me, Boss));
+        world.Dead.Remove(Me); // respawned before the fight ended
+        tracker.End(FightOutcome.Unknown, T0.AddSeconds(5));
+        Assert.Equal(FightOutcome.Wipe, tracker.Last!.Outcome);
+    }
+
+    [Fact]
+    public void KillAfterBeingRaisedIsAClear()
+    {
+        tracker.Handle(Hit(0, Me, Boss, 100));
+        world.Dead.Add(Me);
+        tracker.Handle(new DeathEvent(T0.AddSeconds(1), Me, Boss));
+        world.Dead.Remove(Me);
+        tracker.Handle(Hit(4, Me, Boss, 100));
+        tracker.Handle(new DeathEvent(T0.AddSeconds(5), Boss, Me));
+        tracker.End(FightOutcome.Unknown, T0.AddSeconds(6));
+        Assert.Equal(FightOutcome.Clear, tracker.Last!.Outcome);
+    }
+
+    [Fact]
+    public void FightStaysOpenWhileTheEnemyIsStillFighting()
+    {
+        // Solo in a hunt: you die, strangers keep fighting the mob, then kill it.
+        tracker.Handle(Hit(0, Me, Boss, 100));
+        tracker.Update(T0.AddSeconds(1), partyInCombat: true);
+        world.Dead.Add(Me);
+        tracker.Handle(new DeathEvent(T0.AddSeconds(5), Me, Boss));
+        world.Engaged.Add(Boss);
+
+        tracker.Update(T0.AddSeconds(60), partyInCombat: false);
+        Assert.NotNull(tracker.Current);
+        Assert.Equal(TimeSpan.FromSeconds(60), tracker.Current!.Duration(T0.AddSeconds(60))); // dead time counts
+
+        tracker.Handle(new DeathEvent(T0.AddSeconds(90), Boss, 999));
+        world.Engaged.Remove(Boss);
+        tracker.Update(T0.AddSeconds(90), partyInCombat: false);
+        tracker.Update(T0.AddSeconds(100), partyInCombat: false);
+
+        Assert.Null(tracker.Current);
+        Assert.Equal(FightOutcome.Clear, tracker.Last!.Outcome);
+        Assert.Equal(TimeSpan.FromSeconds(90), tracker.Last.FinalDuration);
+    }
+
+    [Fact]
+    public void RaisedAndBackInIsTheSameFight()
+    {
+        tracker.Handle(Hit(0, Me, Boss, 100));
+        tracker.Update(T0.AddSeconds(1), partyInCombat: true);
+        world.Dead.Add(Me);
+        tracker.Handle(new DeathEvent(T0.AddSeconds(5), Me, Boss));
+        world.Engaged.Add(Boss);
+        tracker.Update(T0.AddSeconds(40), partyInCombat: false);
+
+        world.Dead.Remove(Me); // raised
+        tracker.Update(T0.AddSeconds(45), partyInCombat: true);
+        tracker.Handle(Hit(46, Me, Boss, 100));
+
+        var fight = tracker.Current!;
+        Assert.Equal(T0, fight.Start);
+        Assert.Equal(200, fight.Combatants[Me].Damage);
+    }
+
+    [Fact]
+    public void EnemyResettingEndsTheFightAsAWipe()
+    {
+        tracker.Handle(Hit(0, Boss, Me, 100));
+        tracker.Update(T0.AddSeconds(1), partyInCombat: true);
+        world.Dead.Add(Me);
+        tracker.Handle(new DeathEvent(T0.AddSeconds(5), Me, Boss));
+        world.Engaged.Add(Boss);
+        tracker.Update(T0.AddSeconds(20), partyInCombat: false);
+
+        world.Engaged.Remove(Boss); // nobody left to fight: it resets
+        tracker.Update(T0.AddSeconds(30), partyInCombat: false);
+        tracker.Update(T0.AddSeconds(40), partyInCombat: false);
+
+        Assert.Null(tracker.Current);
+        Assert.Equal(FightOutcome.Wipe, tracker.Last!.Outcome);
+        Assert.Equal(TimeSpan.FromSeconds(30), tracker.Last.FinalDuration);
     }
 }

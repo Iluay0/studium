@@ -22,6 +22,7 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
 
     private readonly Plugin plugin;
     private readonly IFontHandle headerFont;
+    private readonly IFontHandle chipFont;
     /// <summary>A past fight picked from the dropdown or history; null shows the live/last fight.</summary>
     private Fight? viewedFight;
     private bool? appliedLock;
@@ -32,6 +33,7 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
     {
         this.plugin = plugin;
         headerFont = Plugin.PluginInterface.UiBuilder.FontAtlas.NewGameFontHandle(new GameFontStyle(GameFontFamilyAndSize.Axis18));
+        chipFont = Plugin.PluginInterface.UiBuilder.FontAtlas.NewGameFontHandle(new GameFontStyle(GameFontFamilyAndSize.Axis12));
         Size = new Vector2(560, 260);
         SizeCondition = ImGuiCond.FirstUseEver;
         SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(160, 132) };
@@ -42,7 +44,11 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
         AllowClickthrough = true;
     }
 
-    public void Dispose() => headerFont.Dispose();
+    public void Dispose()
+    {
+        headerFont.Dispose();
+        chipFont.Dispose();
+    }
 
     /// <summary>Whether the "Show meter" setting currently allows the meter (it stays open, just not drawn).</summary>
     public bool AllowedByVisibility =>
@@ -142,7 +148,7 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
     private bool ClickThroughConfigured => Config.LockMeter && Config.ClickThroughWhenLocked;
 
     /// <summary>
-    /// Timer on the left; fight name (the fight picker, with outcome chip) and zone stacked beside it;
+    /// Timer on the left with the outcome chip under it; fight name (the fight picker) and zone stacked beside it;
     /// flat icon buttons on the right. As space runs out the zone goes first, then the fight name.
     /// </summary>
     private void DrawHeader(Fight? fight, DateTime now)
@@ -155,15 +161,40 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
         Vector2 timerSize;
         using (headerFont.Push())
             timerSize = ImGui.CalcTextSize(timerText);
-        var textBlockHeight = lineHeight * 2;
-        var rowHeight = Math.Max(timerSize.Y, textBlockHeight);
 
-        ImGui.SetCursorPosY(rowTop + ((rowHeight - timerSize.Y) / 2));
+        // The outcome chip sits under the timer, in a smaller font, once the fight is over.
+        var outcome = fight is { IsActive: false } ? fight.Outcome : FightOutcome.Unknown;
+        var chipText = outcome switch
+        {
+            FightOutcome.Clear => "Clear",
+            FightOutcome.Wipe => "Wipe",
+            _ => null,
+        };
+        var chipHeight = 0f;
+        if (chipText != null)
+        {
+            using (chipFont.Push())
+                chipHeight = ImGui.GetTextLineHeight() + 2;
+        }
+
+        var textBlockHeight = lineHeight * 2;
+        var leftHeight = timerSize.Y + chipHeight;
+        var rowHeight = Math.Max(leftHeight, textBlockHeight);
+        var leftTop = rowTop + ((rowHeight - leftHeight) / 2);
+        var timerX = ImGui.GetCursorPosX();
+
+        ImGui.SetCursorPosY(leftTop);
         using (headerFont.Push())
             Widgets.Text(Theme.Bright, timerText);
+        if (chipText != null)
+        {
+            ImGui.SetCursorPos(new Vector2(timerX, leftTop + timerSize.Y + 1));
+            using (chipFont.Push())
+                Widgets.Chip(chipText, outcome == FightOutcome.Clear ? Theme.Clear : Theme.Wipe);
+        }
 
-        ImGui.SameLine(0, 10);
-        var textX = ImGui.GetCursorPosX();
+        // Positioned directly: after the chip, SameLine would follow the chip, not the timer.
+        var textX = timerX + timerSize.X + 10;
         var buttonSize = ImGui.GetFrameHeight();
         var buttonsX = ImGui.GetContentRegionMax().X - (buttonSize * 2) - 2;
         var textWidth = buttonsX - textX - style.ItemSpacing.X;
@@ -218,22 +249,14 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
         using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
             caretWidth = ImGui.CalcTextSize(caret).X;
         const float spacing = 5f;
-        var outcome = shown is { IsActive: false } ? shown.Outcome : FightOutcome.Unknown;
-        var chipText = outcome switch
-        {
-            FightOutcome.Clear => "Clear",
-            FightOutcome.Wipe => "Wipe",
-            _ => null,
-        };
-        var chipWidth = chipText != null ? ImGui.CalcTextSize(chipText).X + 10 + spacing : 0;
-        var name = Widgets.Truncate(shown?.Name ?? "No fight yet", Math.Max(maxWidth - chipWidth - spacing - caretWidth, 0));
+        var name = Widgets.Truncate(shown?.Name ?? "No fight yet", Math.Max(maxWidth - spacing - caretWidth, 0));
         var nameWidth = ImGui.CalcTextSize(name).X;
         var lineHeight = ImGui.GetTextLineHeight();
 
         var start = ImGui.GetCursorPos();
         ImGui.PushStyleColor(ImGuiCol.HeaderHovered, Theme.Hover);
         ImGui.PushStyleColor(ImGuiCol.HeaderActive, Theme.Hover);
-        var clicked = ImGui.Selectable("##fightPicker", false, ImGuiSelectableFlags.None, new Vector2(nameWidth + chipWidth + spacing + caretWidth, lineHeight));
+        var clicked = ImGui.Selectable("##fightPicker", false, ImGuiSelectableFlags.None, new Vector2(nameWidth + spacing + caretWidth, lineHeight));
         ImGui.PopStyleColor(2);
         if (clicked)
             ImGui.OpenPopup("##fights");
@@ -244,11 +267,6 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
 
         ImGui.SetCursorPos(start);
         Widgets.Text(Theme.Bright, name);
-        if (chipText != null)
-        {
-            ImGui.SameLine(0, spacing);
-            Widgets.Chip(chipText, outcome == FightOutcome.Clear ? Theme.Clear : Theme.Wipe);
-        }
         ImGui.SameLine(0, spacing);
         using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
             Widgets.Text(hovered ? Theme.Text : Theme.Dim, caret);
@@ -402,9 +420,9 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
                 var cellStart = ImGui.GetCursorPos();
                 ImGui.PushStyleColor(ImGuiCol.HeaderHovered, jobColour with { W = 0.10f });
                 ImGui.PushStyleColor(ImGuiCol.HeaderActive, jobColour with { W = 0.16f });
-                if (ImGui.Selectable($"##row{row.Id}", false, ImGuiSelectableFlags.SpanAllColumns | ImGuiSelectableFlags.AllowItemOverlap, new Vector2(0, lineHeight)))
-                    plugin.DrillDownWindow.Show(fight, row.Id, tab);
+                var clicked = ImGui.Selectable($"##row{row.Id}", false, ImGuiSelectableFlags.SpanAllColumns | ImGuiSelectableFlags.AllowItemOverlap, new Vector2(0, lineHeight));
                 ImGui.PopStyleColor(2);
+                (float Min, float Max)? deathsCell = null;
                 ImGui.SetCursorPos(cellStart);
 
                 DrawNameCell(row, isSelf, lineHeight);
@@ -412,10 +430,25 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
                 for (var i = 1; i < columns.Length; i++)
                 {
                     ImGui.TableNextColumn();
+                    if (columns[i].Header == "Deaths")
+                    {
+                        var x = ImGui.GetCursorScreenPos().X;
+                        deathsCell = (x, x + ImGui.GetContentRegionAvail().X);
+                    }
                     // The tab's main number (first after the name) is bright; the rest are muted.
                     Widgets.RightText(columns[i].Value(row), i == 1 ? Theme.Bright : Theme.Muted);
                     if (columns[i].Tooltip?.Invoke(row) is { Length: > 0 } tooltip && ImGui.IsItemHovered())
                         ImGui.SetTooltip(tooltip);
+                    if (columns[i].Header == "Deaths" && row.Deaths > 0 && ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Death recap");
+                }
+
+                // A click on the Deaths number opens the breakdown on its Deaths tab; anywhere else, on Abilities.
+                if (clicked)
+                {
+                    var mouseX = ImGui.GetMousePos().X;
+                    var onDeaths = row.Deaths > 0 && deathsCell is { } cell && mouseX >= cell.Min && mouseX <= cell.Max;
+                    plugin.DrillDownWindow.Show(fight, row.Id, tab, deaths: onDeaths);
                 }
             }
         }

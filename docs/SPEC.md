@@ -45,12 +45,13 @@ Reference implementations (read only, never copy verbatim):
 
 ### Fight lifecycle
 - **Start:** the first damage event involving a party member (or you, when solo).
-- **End:** the whole party is out of combat, or on a wipe or duty completion. Fallback: N seconds with no damage (for open-world content such as FATEs).
-- **Outcome:** clear or wipe, when the game tells us; otherwise unknown.
+- **End:** the whole party is out of combat **and** the fight's main enemy is no longer engaged (dead, reset, or not targeting anyone), or on a duty wipe / completion. So with your party dead in a hunt or FATE, the fight continues while others fight the mob, and a raise resumes the same fight. Dead time counts. Then a 10 s hold (timer paused; re-entering resumes). Fallback: 30 s with no damage when the combat flag never came up.
+- **Enemies** are recorded when your party damages them or they damage your party; the fight is named after the one that took the most damage.
+- **Outcome:** duties report wipe / clear (and always win). Outside that, a fight is a Clear when its main enemy (the one it's named after) died (death packet, or the game's dead flag at fight end), and a Wipe when at some death every party member in the fight (or you, solo) was dead at once (checked at each death, so respawning or a raise before the fight ends doesn't undo it). Otherwise unknown ("—"), e.g. striking dummies or running away.
 - **Name:** the main enemy's name (the highest-HP hostile target engaged), plus the zone.
 
 ### Meter window (kagerou-style)
-- **Header:** large timer on the left; beside it, fight name (the fight dropdown) with outcome, and the zone on a second line, both cut to fit; history 🕘 and settings ⚙ buttons on the right. Collapse is the native title-bar arrow.
+- **Header:** large timer on the left with the Clear / Wipe chip under it (smaller font); beside it, fight name (the fight dropdown), and the zone on a second line, both cut to fit; history 🕘 and settings ⚙ buttons on the right. Collapse is the native title-bar arrow.
 - **Fight dropdown:**
   - Lists the fights of the current **play session**. A new session starts after an idle gap of 4 h or more (configurable), so a session can cross midnight.
   - If the session has fewer than N fights (default 15), it fills up with the most recent earlier fights.
@@ -121,7 +122,7 @@ All options live here, never in the meter.
 ## Post-MVP (in order)
 
 1. **Shield estimation**, like IINACT/ACT: on by default, toggle to disable. Tracks shield-granting statuses and estimates absorbed damage per caster. About 3–5 days.
-2. **Death recap:** the last ~10 s of damage and healing before each death. Needs a rolling event buffer.
+2. **Death recap** (built): breakdown window gets Abilities | Deaths tabs; clicking the meter's Deaths number opens Deaths. Each death shows "mm:ss · killed by <ability> (<source>)" and the last 30 s newest first: time before death, ability (icon), source, amount (red damage / green heal / miss, with crit/DH/parry/block), HP after with a bar. Party members' HP is read with each hit/heal (before it applies). Saved with the fight. Follow-up idea: buffs/mitigation up at each hit.
 3. **DPS-over-time graph** per fight and pull comparison.
 4. **Per-tab column editor.**
 5. **Custom plugin repo** (`repo.json`) for sharing with friends.

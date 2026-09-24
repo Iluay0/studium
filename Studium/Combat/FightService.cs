@@ -51,6 +51,7 @@ public sealed class FightService : ICombatWorld, IDisposable
 
         // Allies are filled on the first framework update: the constructor runs off the main thread,
         // where Dalamud forbids reading the object table.
+        source.TracksHp = IsAlly;
         source.EventReceived += OnEvent;
         framework.Update += OnFrameworkUpdate;
         dutyState.DutyWiped += OnDutyWiped;
@@ -73,6 +74,13 @@ public sealed class FightService : ICombatWorld, IDisposable
         source.Actors.Refresh(entityId);
         return source.Actors.Get(entityId) is { } actor ? new ActorSnapshot(actor.Name, actor.ClassJobId, actor.OwnerId) : null;
     }
+
+    public bool IsDead(uint entityId) => objectTable.SearchByEntityId(entityId) is { IsDead: true };
+
+    public bool IsEngaged(uint entityId) =>
+        objectTable.SearchByEntityId(entityId) is IBattleChara { IsDead: false } enemy
+        && (enemy.StatusFlags.HasFlag(StatusFlags.InCombat)
+            || enemy.TargetObjectId is not (0 or EffectDecoder.InvalidEntityId));
 
     public uint LocalPlayerId => objectTable.LocalPlayer?.EntityId ?? 0;
 

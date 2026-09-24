@@ -28,7 +28,11 @@ public sealed record ActionHitEvent(
     long Amount,
     bool Crit,
     bool DirectHit,
-    long Overheal = 0) : CombatEvent(Time);
+    long Overheal = 0,
+    TargetHp? Hp = null) : CombatEvent(Time);
+
+/// <summary>The target's HP when the event arrived (before it was applied). Only read for party members.</summary>
+public readonly record struct TargetHp(uint Current, uint Max);
 
 /// <summary>
 /// A DoT or HoT tick. The game names the source on the tick itself, but not which DoT / HoT it is:
@@ -42,7 +46,8 @@ public sealed record PeriodicTickEvent(
     bool IsHeal,
     long Amount,
     long Overheal = 0,
-    IReadOnlyList<uint>? StatusIds = null) : CombatEvent(Time);
+    IReadOnlyList<uint>? StatusIds = null,
+    TargetHp? Hp = null) : CombatEvent(Time);
 
 public static class Overheal
 {

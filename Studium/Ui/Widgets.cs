@@ -86,6 +86,29 @@ public static class Widgets
     public static void PushClip(Vector2 min, Vector2 max, (Vector2 Min, Vector2 Max) bounds) =>
         ImGui.PushClipRect(Vector2.Max(min, bounds.Min), Vector2.Max(Vector2.Max(min, bounds.Min), Vector2.Min(max, bounds.Max)), false);
 
+    /// <summary>Flat text tabs with an accent underline on the selected one. Returns the (possibly new) selection.</summary>
+    public static int FlatTabs(string id, IReadOnlyList<string> labels, int selected)
+    {
+        var drawList = ImGui.GetWindowDrawList();
+        var lineHeight = ImGui.GetTextLineHeight();
+        for (var i = 0; i < labels.Count; i++)
+        {
+            if (i > 0)
+                ImGui.SameLine(0, 14);
+            var size = new Vector2(ImGui.CalcTextSize(labels[i]).X, lineHeight + 4);
+            var start = ImGui.GetCursorScreenPos();
+            if (ImGui.InvisibleButton($"{id}{i}", size))
+                selected = i;
+            var colour = i == selected || ImGui.IsItemHovered() ? Theme.Text : Theme.Dim;
+            DrawText(drawList, start, U32(colour), labels[i]);
+            if (i == selected)
+                drawList.AddRectFilled(new Vector2(start.X, start.Y + size.Y - 2), new Vector2(start.X + size.X, start.Y + size.Y), U32(Theme.Accent));
+        }
+        return selected;
+    }
+
+    private static uint U32(Vector4 colour) => Theme.U32(colour);
+
     /// <summary>Flat icon button: no box until hovered, muted icon that brightens on hover.</summary>
     public static bool FlatIconButton(string id, FontAwesomeIcon icon, string tooltip)
     {

@@ -99,6 +99,7 @@ public sealed class EnemyStats
 {
     public string Name { get; set; } = string.Empty;
     public long DamageTaken { get; set; }
+    public bool Died { get; set; }
 }
 
 /// <summary>Who you were and where, when a fight started.</summary>
@@ -126,6 +127,12 @@ public sealed class Fight
 
     public Dictionary<uint, CombatantStats> Combatants { get; init; } = new();
     public Dictionary<uint, EnemyStats> Enemies { get; init; } = new();
+
+    /// <summary>At some point every party member in the fight was dead at once (checked at each death).</summary>
+    public bool PartyWiped { get; set; }
+
+    /// <summary>Party members' deaths in this fight, oldest first, each with the events leading up to it.</summary>
+    public List<DeathRecord> Deaths { get; init; } = new();
 
     /// <summary>Combo tick keys → the statuses that were up together (sorted status IDs).</summary>
     public Dictionary<uint, uint[]> StatusCombos { get; init; } = new();
@@ -155,10 +162,12 @@ public sealed class Fight
         return newKey;
     }
 
-    /// <summary>The fight is named after the enemy that took the most damage.</summary>
+    /// <summary>The enemy that took the most damage; the fight is named after it.</summary>
     [JsonIgnore]
-    public string Name =>
-        Enemies.Count == 0 ? "Encounter" : Enemies.Values.MaxBy(e => e.DamageTaken)!.Name;
+    public EnemyStats? MainEnemy => Enemies.Values.MaxBy(e => e.DamageTaken);
+
+    [JsonIgnore]
+    public string Name => MainEnemy?.Name ?? "Encounter";
 
     /// <summary>First hit until the fight ends. The live timer uses the same rule, so it never jumps when the fight ends.</summary>
     [JsonIgnore]

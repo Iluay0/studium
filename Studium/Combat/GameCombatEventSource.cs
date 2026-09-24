@@ -46,6 +46,9 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
 
     public ActorCache Actors { get; }
 
+    /// <summary>Whose HP to read with each event (party members, for death recaps). Reading everyone's would be wasted work.</summary>
+    public Func<uint, bool> TracksHp { get; set; } = _ => false;
+
     private readonly GameNames names;
 
     public GameCombatEventSource(IGameInteropProvider interop, IObjectTable objectTable, IPluginLog log, GameNames names)
@@ -127,10 +130,12 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
 
                 // "Source entries" land on the caster (e.g. a self-heal riding on a damage action).
                 var effectTarget = decoded.TargetsSource ? casterId : targetId;
-                var overheal = decoded.Kind == HitKind.Heal ? OverhealOn(effectTarget, decoded.Amount) : 0;
+                var isHeal = decoded.Kind == HitKind.Heal;
+                var hp = isHeal || TracksHp(effectTarget) ? ReadHp(effectTarget) : null;
+                var overheal = isHeal && hp is { } h ? Overheal.Estimate(decoded.Amount, h.Current, h.Max) : 0;
                 EventReceived?.Invoke(new ActionHitEvent(
                     now, casterId, ownerId, effectTarget, header->ActionId, header->ActionType,
-                    decoded.Kind, decoded.Amount, decoded.Crit, decoded.DirectHit, overheal));
+                    decoded.Kind, decoded.Amount, decoded.Crit, decoded.DirectHit, overheal, TracksHp(effectTarget) ? hp : null));
             }
         }
     }
@@ -152,9 +157,11 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
                     {
                         Actors.Observe(sourceId);
                         Actors.Observe(entityId);
-                        var overheal = isHeal ? OverhealOn(entityId, amount) : 0;
+                        var hp = isHeal || TracksHp(entityId) ? ReadHp(entityId) : null;
+                        var overheal = isHeal && hp is { } h ? Overheal.Estimate(amount, h.Current, h.Max) : 0;
                         var statuses = TickCandidates(entityId, sourceId, isHeal, arg1);
-                        EventReceived?.Invoke(new PeriodicTickEvent(now, sourceId, Actors.OwnerOf(sourceId), entityId, isHeal, amount, overheal, statuses));
+                        EventReceived?.Invoke(new PeriodicTickEvent(now, sourceId, Actors.OwnerOf(sourceId), entityId, isHeal, amount, overheal,
+                            statuses, TracksHp(entityId) ? hp : null));
                     }
                     break;
                 case EffectDecoder.ActorControlDeath:
@@ -209,10 +216,9 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
         return candidates;
     }
 
-    private long OverhealOn(uint targetId, long amount) =>
-        objectTable.SearchByEntityId(targetId) is ICharacter target
-            ? Overheal.Estimate(amount, target.CurrentHp, target.MaxHp)
-            : 0;
+    /// <summary>The target's HP right now, i.e. before this event is applied.</summary>
+    private TargetHp? ReadHp(uint targetId) =>
+        objectTable.SearchByEntityId(targetId) is ICharacter target ? new TargetHp(target.CurrentHp, target.MaxHp) : null;
 
     private static uint NormalizeId(uint id) => id == EffectDecoder.InvalidEntityId ? 0 : id;
 }

@@ -11,6 +11,12 @@ public interface ICombatWorld
     bool IsAlly(uint entityId);
 
     ActorSnapshot? Lookup(uint entityId);
+
+    /// <summary>Whether the actor is currently dead in the game world (false if unknown / gone).</summary>
+    bool IsDead(uint entityId) => false;
+
+    /// <summary>Whether an enemy is alive and still fighting (in combat or targeting someone).</summary>
+    bool IsEngaged(uint entityId) => false;
 }
 
 /// <summary>
@@ -28,6 +34,7 @@ public sealed class FightTracker
     public static readonly TimeSpan OutOfCombatGrace = TimeSpan.FromSeconds(10);
 
     private readonly ICombatWorld world;
+    private readonly DeathRecorder deaths = new();
     private bool sawPartyInCombat;
 
     public FightTracker(ICombatWorld world) => this.world = world;
@@ -54,19 +61,34 @@ public sealed class FightTracker
                 HandleTick(tick);
                 break;
             case DeathEvent death:
-                if (Current != null && world.IsAlly(death.TargetId))
-                    Stats(death.TargetId).Deaths++;
+                if (Current == null)
+                    break;
+                if (world.IsAlly(death.TargetId))
+                {
+                    var victim = Stats(death.TargetId);
+                    victim.Deaths++;
+                    Current.Deaths.Add(deaths.Record(death.TargetId, victim.Name, victim.JobId, death.Time, Current.Start,
+                        id => world.Lookup(id)?.Name ?? string.Empty));
+                    // Checked now, not at fight end: respawning or a raise afterwards doesn't undo a wipe.
+                    if (Current.Combatants.Keys.Where(world.IsAlly).All(id => id == death.TargetId || world.IsDead(id)))
+                        Current.PartyWiped = true;
+                }
+                else if (Current.Enemies.TryGetValue(death.TargetId, out var enemy))
+                    enemy.Died = true;
                 break;
         }
     }
 
-    /// <summary>Called every frame with whether you or any party member is in combat.</summary>
+    /// <summary>
+    /// Called every frame with whether you or any party member is in combat. The fight also stays open while
+    /// its main enemy is still engaged: with your party dead, others may still be fighting it (hunts, FATEs).
+    /// </summary>
     public void Update(DateTime now, bool partyInCombat)
     {
         if (Current == null)
             return;
 
-        if (partyInCombat)
+        if (partyInCombat || MainEnemyEngaged(Current))
         {
             sawPartyInCombat = true;
             Current.HeldAt = null;
@@ -97,12 +119,37 @@ public sealed class FightTracker
         fight.IsActive = false;
         fight.HeldAt = null;
         fight.EndTime = endTime < fight.Start ? fight.Start : endTime;
+        // Duties report wipes and clears. Elsewhere: killing the main enemy is a clear; the whole party
+        // (or you, solo) dead at once, with the enemy alive, is a wipe; anything else stays unknown.
+        if (outcome == FightOutcome.Unknown && MainEnemyDied(fight))
+            outcome = FightOutcome.Clear;
+        else if (outcome == FightOutcome.Unknown && fight.PartyWiped)
+            outcome = FightOutcome.Wipe;
         if (outcome != FightOutcome.Unknown)
             fight.Outcome = outcome;
         Current = null;
         Last = fight;
         sawPartyInCombat = false;
         FightEnded?.Invoke(fight);
+    }
+
+    private bool MainEnemyEngaged(Fight fight)
+    {
+        if (fight.Enemies.Count == 0)
+            return false;
+        var (id, enemy) = fight.Enemies.MaxBy(e => e.Value.DamageTaken);
+        return !enemy.Died && world.IsEngaged(id);
+    }
+
+    /// <summary>The death packet usually marks it; failing that, ask the game whether it's dead now.</summary>
+    private bool MainEnemyDied(Fight fight)
+    {
+        if (fight.Enemies.Count == 0)
+            return false;
+        var (id, enemy) = fight.Enemies.MaxBy(e => e.Value.DamageTaken);
+        if (!enemy.Died && world.IsDead(id))
+            enemy.Died = true;
+        return enemy.Died;
     }
 
     private void HandleHit(ActionHitEvent hit)
@@ -138,6 +185,9 @@ public sealed class FightTracker
                 var victim = Stats(hit.TargetId);
                 victim.DamageTaken += hit.Amount;
                 victim.HitsTaken++;
+                AddEnemyDamage(hit.SourceOwnerId != 0 ? hit.SourceOwnerId : hit.SourceId, 0); // an enemy even if never hit back
+                deaths.Damage(hit.TargetId, hit.Time, hit.SourceId, hit.ActionId, hit.Amount, hit.Crit, hit.DirectHit,
+                    hit.Kind == HitKind.ParriedDamage, hit.Kind == HitKind.BlockedDamage, hit.Hp);
                 Ability(victim.TakenAbilities, hit.ActionId).Add(hit.Amount, hit.Crit, hit.DirectHit);
                 if (hit.Kind == HitKind.ParriedDamage)
                     victim.Parried++;
@@ -164,11 +214,16 @@ public sealed class FightTracker
                     Ability(healer.HealAbilities, hit.ActionId).Add(hit.Amount, hit.Crit, overheal: hit.Overheal);
                 }
                 if (targetIsAlly)
+                {
                     Stats(hit.TargetId).HealingReceived += hit.Amount;
+                    deaths.Heal(hit.TargetId, hit.Time, hit.SourceId, hit.ActionId, hit.Amount, hit.Overheal, hit.Crit, hit.Hp);
+                }
                 break;
             case HitKind.Miss:
                 if (sourceIsAlly && !targetIsAlly)
                     Stats(hit.SourceId, hit.SourceOwnerId).Misses++;
+                if (targetIsAlly && !sourceIsAlly)
+                    deaths.Miss(hit.TargetId, hit.Time, hit.SourceId, hit.ActionId);
                 break;
         }
     }
@@ -190,7 +245,10 @@ public sealed class FightTracker
                 RecordTick(healer.HealAbilities, tick);
             }
             if (targetIsAlly)
+            {
                 Stats(tick.TargetId).HealingReceived += tick.Amount;
+                deaths.Heal(tick.TargetId, tick.Time, tick.SourceId, Current.TickKey(tick.StatusIds ?? [], true), tick.Amount, tick.Overheal, false, tick.Hp);
+            }
             return;
         }
 
@@ -209,7 +267,10 @@ public sealed class FightTracker
         {
             var victim = Stats(tick.TargetId);
             victim.DamageTaken += tick.Amount;
+            AddEnemyDamage(tick.SourceOwnerId != 0 ? tick.SourceOwnerId : tick.SourceId, 0);
             RecordTick(victim.TakenAbilities, tick);
+            deaths.Damage(tick.TargetId, tick.Time, tick.SourceId, Current!.TickKey(tick.StatusIds ?? [], false), tick.Amount,
+                false, false, false, false, tick.Hp);
         }
     }
 
@@ -232,6 +293,7 @@ public sealed class FightTracker
                 World = context?.World ?? string.Empty,
                 LocalPlayerId = context?.LocalPlayerId ?? 0,
             };
+            deaths.Clear();
             sawPartyInCombat = false;
         }
 
