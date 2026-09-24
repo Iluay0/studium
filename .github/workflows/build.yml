@@ -1,0 +1,68 @@
+name: Build and release
+
+# Every push to master is built and tested. When the plugin's <Version> (Studium/Studium.csproj) differs from
+# repo.json, a GitHub Release is created with the plugin zip and repo.json is updated, so Dalamud offers the
+# update to everyone using the custom repo.
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      DALAMUD_HOME: /tmp/dalamud
+      DOTNET_NOLOGO: true
+      RELEASE_VERSION: ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Download Dalamud
+        run: |
+          curl -sSL https://goatcorp.github.io/dalamud-distrib/stg/latest.zip -o dalamud.zip
+          unzip -q -o dalamud.zip -d /tmp/dalamud
+
+      - name: Test
+        run: dotnet test Studium.Tests -c Release
+
+      - name: Build
+        run: dotnet build Studium/Studium.csproj -c Release
+
+      - name: Check for a new version
+        if: github.event_name == 'push'
+        run: |
+          built=$(jq -r '.AssemblyVersion' Studium/bin/Release/Studium/Studium.json)
+          published=$(jq -r '.[0].AssemblyVersion' repo.json)
+          if [ "$built" != "$published" ]; then echo "RELEASE_VERSION=$built" >> "$GITHUB_ENV"; fi
+
+      - name: Create release
+        if: env.RELEASE_VERSION != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Studium/bin/Release/Studium/latest.zip
+          name: Studium ${{ env.RELEASE_VERSION }}
+          tag_name: v${{ env.RELEASE_VERSION }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+      - name: Update repo.json
+        if: env.RELEASE_VERSION != ''
+        run: |
+          url="https://github.com/${{ github.repository }}/releases/download/v${RELEASE_VERSION}/latest.zip"
+          jq --arg v "$RELEASE_VERSION" --arg url "$url" \
+            '.[0].AssemblyVersion = $v | .[0].DownloadLinkInstall = $url | .[0].DownloadLinkUpdate = $url | .[0].LastUpdate = (now | floor | tostring)' \
+            repo.json > repo.tmp && mv repo.tmp repo.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add repo.json
+          git commit -m "release ${RELEASE_VERSION}"
+          git push origin HEAD:master
