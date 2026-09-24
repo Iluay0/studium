@@ -1,6 +1,8 @@
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
 using Studium.Core;
+using Studium.Core.Combat;
 using Studium.Core.Fights;
 using Studium.Ui;
 
@@ -134,63 +136,180 @@ public sealed class DrillDownWindow : Theme.ThemedWindow
         ImGui.EndChild();
     }
 
+    private enum DeathColumn
+    {
+        Time,
+        Event,
+        Source,
+        Amount,
+        Hp,
+        OnEnemy,
+        Buffs,
+    }
+
+    private static readonly (DeathColumn Column, string Header)[] DeathColumns =
+    [
+        (DeathColumn.Time, "Time"), (DeathColumn.Event, "Event"), (DeathColumn.Source, "Source"), (DeathColumn.Amount, "Amount"),
+        (DeathColumn.Hp, "HP after"), (DeathColumn.OnEnemy, "On enemy"), (DeathColumn.Buffs, "Buffs"),
+    ];
+
+    /// <summary>
+    /// One death's events. Like the meter, it fits the window: Event and Source take the spare width and cut
+    /// their text; the other columns keep their content width; when even that doesn't fit, columns drop from
+    /// the right (Buffs first). Time and Event always stay.
+    /// </summary>
     private void DrawDeath(DeathRecord death, int index, float iconSize)
     {
-        string[] headers = ["Time", "Event", "Source", "Amount", "HP after"];
         var tableLeft = ImGui.GetCursorScreenPos().X;
         var tableWidth = ImGui.GetContentRegionAvail().X;
-        if (!ImGui.BeginTable($"##death{index}", headers.Length, ImGuiTableFlags.SizingStretchProp))
+        var columns = FittingDeathColumns(death, iconSize, tableWidth);
+
+        if (!ImGui.BeginTable($"##death{index}_{columns.Count}", columns.Count, ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.NoSavedSettings))
             return;
-        for (var i = 0; i < headers.Length; i++)
-            ImGui.TableSetupColumn(headers[i], i == 1 ? ImGuiTableColumnFlags.WidthStretch : ImGuiTableColumnFlags.WidthFixed);
-        Widgets.HeaderRow(headers, tableLeft, tableWidth, rightAlignNumbers: false);
+        foreach (var (column, header, width) in columns)
+        {
+            if (column is DeathColumn.Event or DeathColumn.Source)
+                ImGui.TableSetupColumn(header, ImGuiTableColumnFlags.WidthStretch, column == DeathColumn.Event ? 1.4f : 1f);
+            else
+                ImGui.TableSetupColumn(header, ImGuiTableColumnFlags.WidthFixed, width);
+        }
+        Widgets.HeaderRow(columns.Select(c => c.Header).ToList(), tableLeft, tableWidth, rightAlignNumbers: false);
 
         var textOffset = (iconSize - ImGui.GetTextLineHeight()) / 2;
         foreach (var e in death.Events)
         {
             ImGui.TableNextRow(ImGuiTableRowFlags.None, iconSize + (ImGui.GetStyle().CellPadding.Y * 2));
-
-            ImGui.TableNextColumn();
-            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + textOffset);
-            ImGui.TextColored(Theme.Muted, $"−{e.SecondsBeforeDeath:0.0}s");
-
-            ImGui.TableNextColumn();
-            DrawKeyIcon(e.AbilityKey, iconSize);
-            ImGui.SameLine(0, 6);
-            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + textOffset);
-            ImGui.TextColored(Theme.Text, KeyName(e.AbilityKey, e.Kind == RecapKind.Heal));
-            KeyTooltip(e.AbilityKey);
-
-            ImGui.TableNextColumn();
-            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + textOffset);
-            ImGui.TextColored(Theme.Muted, e.SourceName);
-
-            ImGui.TableNextColumn();
-            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + textOffset);
-            var (amount, colour) = e.Kind switch
+            foreach (var (column, _, _) in columns)
             {
-                RecapKind.Heal => ($"+{e.Amount:N0}", Theme.Clear),
-                RecapKind.Miss => ("Miss", Theme.Dim),
-                _ => ($"−{e.Amount:N0}", Theme.Wipe),
-            };
-            var marks = string.Concat(e.Crit ? " crit" : "", e.DirectHit ? " DH" : "", e.Parried ? " parry" : "", e.Blocked ? " block" : "");
-            ImGui.TextColored(colour, amount);
-            if (marks.Length > 0)
-            {
-                ImGui.SameLine(0, 4);
-                ImGui.TextColored(Theme.Muted, marks.Trim());
+                ImGui.TableNextColumn();
+                if (column is not (DeathColumn.Event or DeathColumn.OnEnemy or DeathColumn.Buffs))
+                    ImGui.SetCursorPosY(ImGui.GetCursorPosY() + textOffset);
+                DrawDeathCell(column, e, iconSize, textOffset);
             }
-
-            ImGui.TableNextColumn();
-            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + textOffset);
-            DrawHpBar(e.HpAfter, e.MaxHp);
         }
 
         ImGui.EndTable();
     }
 
-    /// <summary>A small HP bar with the percentage; red under 25%. "—" when HP wasn't known.</summary>
-    private static void DrawHpBar(uint? hp, uint max)
+    private void DrawDeathCell(DeathColumn column, RecapEvent e, float iconSize, float textOffset)
+    {
+        switch (column)
+        {
+            case DeathColumn.Time:
+                ImGui.TextColored(Theme.Muted, TimeText(e));
+                break;
+            case DeathColumn.Event:
+                DrawKeyIcon(e.AbilityKey, iconSize);
+                ImGui.SameLine(0, 6);
+                ImGui.SetCursorPosY(ImGui.GetCursorPosY() + textOffset);
+                FittedText(KeyName(e.AbilityKey, e.Kind == RecapKind.Heal), Theme.Text);
+                KeyTooltip(e.AbilityKey);
+                break;
+            case DeathColumn.Source:
+                FittedText(e.SourceName, Theme.Muted);
+                break;
+            case DeathColumn.Amount:
+                var (amount, colour) = AmountText(e);
+                ImGui.TextColored(colour, amount);
+                if (MarksText(e) is { Length: > 0 } marks)
+                {
+                    ImGui.SameLine(0, 4);
+                    ImGui.TextColored(Theme.Muted, marks);
+                }
+                break;
+            case DeathColumn.Hp:
+                DrawHpBar(e.HpAfter, e.MaxHp, e.Defense?.ShieldPercent ?? 0);
+                break;
+            case DeathColumn.OnEnemy:
+                DrawStatuses(e.Defense?.OnAttacker, iconSize);
+                break;
+            case DeathColumn.Buffs:
+                DrawStatuses(e.Defense?.Target, iconSize);
+                break;
+        }
+    }
+
+    /// <summary>Text cut to the cell's width, with the full text on hover when it was cut.</summary>
+    private static void FittedText(string text, Vector4 colour)
+    {
+        var fitted = Widgets.Truncate(text, ImGui.GetContentRegionAvail().X);
+        ImGui.TextColored(colour, fitted);
+        if (fitted != text && ImGui.IsItemHovered())
+            ImGui.SetTooltip(text);
+    }
+
+    private static string TimeText(RecapEvent e) => $"−{e.SecondsBeforeDeath:0.0}s";
+
+    private static (string Text, Vector4 Colour) AmountText(RecapEvent e) => e.Kind switch
+    {
+        RecapKind.Heal => ($"+{e.Amount:N0}", Theme.Clear),
+        RecapKind.Miss => ("Miss", Theme.Dim),
+        _ => ($"−{e.Amount:N0}", Theme.Wipe),
+    };
+
+    private static string MarksText(RecapEvent e) =>
+        string.Join(" ", new[] { e.Crit ? "crit" : null, e.DirectHit ? "DH" : null, e.Parried ? "parry" : null, e.Blocked ? "block" : null }.OfType<string>());
+
+    /// <summary>
+    /// Which columns fit, with the width each fixed column needs. Event and Source need at least a minimum;
+    /// columns drop from the right until everything fits.
+    /// </summary>
+    private static List<(DeathColumn Column, string Header, float Width)> FittingDeathColumns(DeathRecord death, float iconSize, float available)
+    {
+        var padding = ImGui.GetStyle().CellPadding.X * 2;
+        var statusWidth = (iconSize * 0.75f) + 1; // status icons are 3:4
+        float Header(string text) => ImGui.CalcTextSize(text.ToUpperInvariant()).X;
+        float Max(Func<RecapEvent, float> measure) => death.Events.Count == 0 ? 0 : death.Events.Max(measure);
+
+        var columns = DeathColumns.Select(c => (c.Column, c.Header, Width: Math.Max(Header(c.Header), c.Column switch
+        {
+            DeathColumn.Time => Max(e => ImGui.CalcTextSize(TimeText(e)).X),
+            DeathColumn.Event => iconSize + 6 + 60, // minimum; it stretches
+            DeathColumn.Source => 50,               // minimum; it stretches
+            DeathColumn.Amount => Max(e => ImGui.CalcTextSize(AmountText(e).Text).X + (MarksText(e) is { Length: > 0 } m ? 4 + ImGui.CalcTextSize(m).X : 0)),
+            DeathColumn.Hp => 70 + 6 + ImGui.CalcTextSize("100%").X,
+            DeathColumn.OnEnemy => Math.Max(Max(e => (e.Defense?.OnAttacker.Count ?? 0) * statusWidth), ImGui.CalcTextSize("—").X),
+            DeathColumn.Buffs => Math.Max(Max(e => (e.Defense?.Target.Count ?? 0) * statusWidth), ImGui.CalcTextSize("—").X),
+            _ => 0,
+        }))).ToList();
+
+        while (columns.Count > 2 && columns.Sum(c => c.Width + padding) > available)
+            columns.RemoveAt(columns.Count - 1);
+        return columns;
+    }
+
+    /// <summary>A row of status icons (hover for name and who applied it), or a dash when there are none.</summary>
+    private void DrawStatuses(IReadOnlyList<StatusSnapshot>? statuses, float rowHeight)
+    {
+        if (statuses is not { Count: > 0 })
+        {
+            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + ((rowHeight - ImGui.GetTextLineHeight()) / 2));
+            ImGui.TextColored(Theme.Dim, "—");
+            return;
+        }
+
+        for (var i = 0; i < statuses.Count; i++)
+        {
+            if (i > 0)
+                ImGui.SameLine(0, 1);
+            StatusIcon(statuses[i], rowHeight);
+        }
+    }
+
+    private void StatusIcon(StatusSnapshot status, float height)
+    {
+        var info = plugin.Names.Status(status.StatusId);
+        if (!Widgets.IconAtHeight(plugin.Names.StatusIcon(status.StatusId, status.Stacks), height))
+            return;
+        var name = status.Stacks > 1 ? $"{info.Name} ×{status.Stacks}" : info.Name;
+        ImGui.SetTooltip(string.IsNullOrEmpty(status.SourceName) ? name : $"{name}\nfrom {status.SourceName}");
+    }
+
+    /// <summary>
+    /// A small HP bar with the percentage (red under 25%), and the shield as a teal segment after the HP,
+    /// like the game's party list. "—" when HP wasn't known.
+    /// </summary>
+    private static void DrawHpBar(uint? hp, uint max, byte shieldPercent)
     {
         if (hp is not { } current || max == 0)
         {
@@ -199,6 +318,7 @@ public sealed class DrillDownWindow : Theme.ThemedWindow
         }
 
         var fraction = Math.Clamp((float)current / max, 0f, 1f);
+        var shield = Math.Clamp(shieldPercent / 100f, 0f, 1f - fraction);
         var lineHeight = ImGui.GetTextLineHeight();
         var barSize = new Vector2(70, 5);
         var start = ImGui.GetCursorScreenPos() + new Vector2(0, (lineHeight - barSize.Y) / 2);
@@ -206,9 +326,17 @@ public sealed class DrillDownWindow : Theme.ThemedWindow
         drawList.AddRectFilled(start, start + barSize, Theme.U32(Theme.Surface), 2f);
         if (fraction > 0)
             drawList.AddRectFilled(start, start + new Vector2(barSize.X * fraction, barSize.Y), Theme.U32(fraction < 0.25f ? Theme.Wipe : Theme.Clear), 2f);
+        if (shield > 0)
+        {
+            var shieldStart = start + new Vector2(barSize.X * fraction, 0);
+            drawList.AddRectFilled(shieldStart, shieldStart + new Vector2(barSize.X * shield, barSize.Y), Theme.U32(Theme.Accent), 2f);
+        }
         ImGui.Dummy(new Vector2(barSize.X, lineHeight));
+        var barHovered = ImGui.IsItemHovered();
         ImGui.SameLine(0, 6);
         ImGui.TextColored(Theme.Muted, $"{fraction * 100:0}%");
+        if (shieldPercent > 0 && (barHovered || ImGui.IsItemHovered()))
+            ImGui.SetTooltip($"Shield: {shieldPercent}% of max HP");
     }
 
     private void DrawSummary(CombatantRow row)

@@ -133,9 +133,11 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
                 var isHeal = decoded.Kind == HitKind.Heal;
                 var hp = isHeal || TracksHp(effectTarget) ? ReadHp(effectTarget) : null;
                 var overheal = isHeal && hp is { } h ? Overheal.Estimate(decoded.Amount, h.Current, h.Max) : 0;
+                var tracked = TracksHp(effectTarget);
                 EventReceived?.Invoke(new ActionHitEvent(
                     now, casterId, ownerId, effectTarget, header->ActionId, header->ActionType,
-                    decoded.Kind, decoded.Amount, decoded.Crit, decoded.DirectHit, overheal, TracksHp(effectTarget) ? hp : null));
+                    decoded.Kind, decoded.Amount, decoded.Crit, decoded.DirectHit, overheal,
+                    tracked ? hp : null, tracked ? ReadDefense(effectTarget, casterId) : null));
             }
         }
     }
@@ -160,8 +162,9 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
                         var hp = isHeal || TracksHp(entityId) ? ReadHp(entityId) : null;
                         var overheal = isHeal && hp is { } h ? Overheal.Estimate(amount, h.Current, h.Max) : 0;
                         var statuses = TickCandidates(entityId, sourceId, isHeal, arg1);
+                        var tracked = TracksHp(entityId);
                         EventReceived?.Invoke(new PeriodicTickEvent(now, sourceId, Actors.OwnerOf(sourceId), entityId, isHeal, amount, overheal,
-                            statuses, TracksHp(entityId) ? hp : null));
+                            statuses, tracked ? hp : null, tracked ? ReadDefense(entityId, sourceId) : null));
                     }
                     break;
                 case EffectDecoder.ActorControlDeath:
@@ -214,6 +217,47 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
                 candidates.Add(status.StatusId);
         }
         return candidates;
+    }
+
+    /// <summary>Statuses with more time left than this are background (e.g. long buffs), not part of a death.</summary>
+    private const float LongStatusSeconds = 300;
+
+    /// <summary>
+    /// A party member's defences as a hit lands: their statuses minus noise, the party's debuffs on the attacker,
+    /// and their shield. Only called for party members, so the extra object lookups stay cheap.
+    /// </summary>
+    private DefenseSnapshot? ReadDefense(uint targetId, uint attackerId)
+    {
+        if (objectTable.SearchByEntityId(targetId) is not IBattleChara target)
+            return null;
+
+        var onTarget = new List<StatusSnapshot>();
+        foreach (var status in target.StatusList)
+        {
+            if (status.StatusId == 0 || status.RemainingTime > LongStatusSeconds || names.Status(status.StatusId).IsNoise)
+                continue;
+            onTarget.Add(Snapshot(status.StatusId, status.Param, status.SourceId));
+        }
+
+        var onAttacker = new List<StatusSnapshot>();
+        if (attackerId != targetId && objectTable.SearchByEntityId(attackerId) is IBattleChara attacker)
+        {
+            foreach (var status in attacker.StatusList)
+            {
+                if (status.StatusId != 0 && TracksHp(status.SourceId) && names.Status(status.StatusId).IsPartyDebuff)
+                    onAttacker.Add(Snapshot(status.StatusId, status.Param, status.SourceId));
+            }
+        }
+
+        return new DefenseSnapshot(onTarget, onAttacker, target.ShieldPercentage);
+    }
+
+    private StatusSnapshot Snapshot(uint statusId, ushort param, uint sourceId)
+    {
+        Actors.Observe(sourceId);
+        var stacks = names.Status(statusId).MaxStacks > 1 ? (byte)Math.Min(param, (ushort)255) : (byte)0;
+        var source = sourceId is 0 or EffectDecoder.InvalidEntityId ? string.Empty : Actors.NameOf(sourceId);
+        return new StatusSnapshot(statusId, stacks, source);
     }
 
     /// <summary>The target's HP right now, i.e. before this event is applied.</summary>

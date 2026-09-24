@@ -29,10 +29,20 @@ public sealed record ActionHitEvent(
     bool Crit,
     bool DirectHit,
     long Overheal = 0,
-    TargetHp? Hp = null) : CombatEvent(Time);
+    TargetHp? Hp = null,
+    DefenseSnapshot? Defense = null) : CombatEvent(Time);
 
 /// <summary>The target's HP when the event arrived (before it was applied). Only read for party members.</summary>
 public readonly record struct TargetHp(uint Current, uint Max);
+
+/// <summary>A status at the moment of a hit: which one, its stack count, and who applied it.</summary>
+public sealed record StatusSnapshot(uint StatusId, byte Stacks, string SourceName);
+
+/// <summary>
+/// A party member's defences when an event hit them (for death recaps): their statuses (minus noise like food),
+/// the debuffs the party had put on the attacker (Reprisal, Addle...), and their shield as % of max HP.
+/// </summary>
+public sealed record DefenseSnapshot(IReadOnlyList<StatusSnapshot> Target, IReadOnlyList<StatusSnapshot> OnAttacker, byte ShieldPercent);
 
 /// <summary>
 /// A DoT or HoT tick. The game names the source on the tick itself, but not which DoT / HoT it is:
@@ -47,7 +57,8 @@ public sealed record PeriodicTickEvent(
     long Amount,
     long Overheal = 0,
     IReadOnlyList<uint>? StatusIds = null,
-    TargetHp? Hp = null) : CombatEvent(Time);
+    TargetHp? Hp = null,
+    DefenseSnapshot? Defense = null) : CombatEvent(Time);
 
 public static class Overheal
 {

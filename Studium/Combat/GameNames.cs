@@ -14,7 +14,12 @@ public sealed class GameNames
     private readonly Dictionary<uint, uint> actionIcons = new();
     private readonly Dictionary<uint, StatusInfo> statuses = new();
 
-    public readonly record struct StatusInfo(string Name, uint Icon, bool IsDot, bool IsHot);
+    /// <param name="IsPartyDebuff">A harmful status players put on enemies that isn't a DoT (Reprisal, Addle, Feint...).</param>
+    /// <param name="IsNoise">Never worth showing in a death recap: permanent (stances), FC buffs, food, potions.</param>
+    public readonly record struct StatusInfo(string Name, uint Icon, bool IsDot, bool IsHot, bool IsPartyDebuff, bool IsNoise, byte MaxStacks);
+
+    private const uint WellFed = 48;
+    private const uint Medicated = 49;
 
     public GameNames(IDataManager dataManager) => this.dataManager = dataManager;
 
@@ -39,6 +44,13 @@ public sealed class GameNames
         return icon;
     }
 
+    /// <summary>The icon for a status at a stack count: stacked statuses have one icon per stack, in sequence.</summary>
+    public uint StatusIcon(uint statusId, byte stacks)
+    {
+        var info = Status(statusId);
+        return info.MaxStacks > 1 && stacks > 1 ? info.Icon + (uint)Math.Min(stacks, info.MaxStacks) - 1 : info.Icon;
+    }
+
     /// <summary>
     /// Status name, icon and kind. The sheet has no DoT flag; its PartyListPriority groups them instead:
     /// 10 on harmful statuses marks damage over time (Dia, Biolysis, bleeds; debuffs like Chain Stratagem are 50),
@@ -50,8 +62,11 @@ public sealed class GameNames
             return info;
         info = dataManager.GetExcelSheet<LuminaStatus>().GetRowOrDefault(statusId) is { } row
             ? new StatusInfo(row.Name.ExtractText(), row.Icon,
-                row.StatusCategory == 2 && row.PartyListPriority == 10,
-                row.StatusCategory == 1 && row.PartyListPriority == 5)
+                IsDot: row.StatusCategory == 2 && row.PartyListPriority == 10,
+                IsHot: row.StatusCategory == 1 && row.PartyListPriority == 5,
+                IsPartyDebuff: row.StatusCategory == 2 && row.PartyListPriority == 50,
+                IsNoise: row.IsPermanent || row.IsFcBuff || statusId is WellFed or Medicated || row.Name.IsEmpty,
+                row.MaxStacks)
             : default;
         statuses[statusId] = info;
         return info;

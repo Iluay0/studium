@@ -180,6 +180,18 @@ public static class Widgets
         ImGui.Dummy(new Vector2(size));
     }
 
+    /// <summary>
+    /// A game icon drawn at a given height, as wide as its own proportions make it (status icons are 3:4).
+    /// Returns whether it's hovered, for tooltips.
+    /// </summary>
+    public static bool IconAtHeight(uint iconId, float height)
+    {
+        var icon = Plugin.TextureProvider.GetFromGameIcon(new GameIconLookup(iconId)).GetWrapOrEmpty();
+        var width = icon.Height > 0 ? height * icon.Width / icon.Height : height * 0.75f;
+        ImGui.Image(icon.Handle, new Vector2(width, height));
+        return ImGui.IsItemHovered();
+    }
+
     /// <summary>Cuts text to fit a width, ending in "...".</summary>
     public static string Truncate(string text, float maxWidth)
     {

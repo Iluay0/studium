@@ -103,4 +103,45 @@ public class DeathRecapTests
                 Directory.Delete(directory, true);
         }
     }
+
+    [Fact]
+    public void DefensesAreKeptWithEachEventAndSaved()
+    {
+        var defense = new DefenseSnapshot(
+            [new StatusSnapshot(1191, 0, "Iluay Dory"), new StatusSnapshot(638, 2, "Wicked Thunder")],
+            [new StatusSnapshot(1193, 0, "Taro Brandt")],
+            ShieldPercent: 25);
+        tracker.Handle(new ActionHitEvent(T0.AddSeconds(1), Boss, 0, Me, 500, 1, HitKind.Damage, 100_000, false, false,
+            Hp: new TargetHp(100_000, 100_000), Defense: defense));
+        tracker.Handle(new DeathEvent(T0.AddSeconds(2), Me, Boss));
+
+        var recorded = tracker.Current!.Deaths[0].Events[0].Defense!;
+        Assert.Equal(25, recorded.ShieldPercent);
+        Assert.Equal([1191u, 638u], recorded.Target.Select(s => s.StatusId));
+        Assert.Equal(2, recorded.Target[1].Stacks);
+        Assert.Equal("Taro Brandt", Assert.Single(recorded.OnAttacker).SourceName);
+
+        var directory = Path.Combine(Path.GetTempPath(), "studium-tests-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            tracker.End(FightOutcome.Wipe, T0.AddSeconds(3));
+            new FightStore(directory).Save(tracker.Last!);
+            var loaded = new FightStore(directory).Load(tracker.Last!.Id)!;
+            Assert.Equal(recorded, loaded.Deaths[0].Events[0].Defense, new DefenseComparer());
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, true);
+        }
+    }
+
+    private sealed class DefenseComparer : IEqualityComparer<DefenseSnapshot?>
+    {
+        public bool Equals(DefenseSnapshot? a, DefenseSnapshot? b) =>
+            a != null && b != null && a.ShieldPercent == b.ShieldPercent
+            && a.Target.SequenceEqual(b.Target) && a.OnAttacker.SequenceEqual(b.OnAttacker);
+
+        public int GetHashCode(DefenseSnapshot? obj) => obj?.ShieldPercent ?? 0;
+    }
 }

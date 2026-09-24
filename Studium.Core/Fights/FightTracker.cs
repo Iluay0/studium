@@ -187,7 +187,7 @@ public sealed class FightTracker
                 victim.HitsTaken++;
                 AddEnemyDamage(hit.SourceOwnerId != 0 ? hit.SourceOwnerId : hit.SourceId, 0); // an enemy even if never hit back
                 deaths.Damage(hit.TargetId, hit.Time, hit.SourceId, hit.ActionId, hit.Amount, hit.Crit, hit.DirectHit,
-                    hit.Kind == HitKind.ParriedDamage, hit.Kind == HitKind.BlockedDamage, hit.Hp);
+                    hit.Kind == HitKind.ParriedDamage, hit.Kind == HitKind.BlockedDamage, hit.Hp, hit.Defense);
                 Ability(victim.TakenAbilities, hit.ActionId).Add(hit.Amount, hit.Crit, hit.DirectHit);
                 if (hit.Kind == HitKind.ParriedDamage)
                     victim.Parried++;
@@ -216,14 +216,14 @@ public sealed class FightTracker
                 if (targetIsAlly)
                 {
                     Stats(hit.TargetId).HealingReceived += hit.Amount;
-                    deaths.Heal(hit.TargetId, hit.Time, hit.SourceId, hit.ActionId, hit.Amount, hit.Overheal, hit.Crit, hit.Hp);
+                    deaths.Heal(hit.TargetId, hit.Time, hit.SourceId, hit.ActionId, hit.Amount, hit.Overheal, hit.Crit, hit.Hp, hit.Defense);
                 }
                 break;
             case HitKind.Miss:
                 if (sourceIsAlly && !targetIsAlly)
                     Stats(hit.SourceId, hit.SourceOwnerId).Misses++;
                 if (targetIsAlly && !sourceIsAlly)
-                    deaths.Miss(hit.TargetId, hit.Time, hit.SourceId, hit.ActionId);
+                    deaths.Miss(hit.TargetId, hit.Time, hit.SourceId, hit.ActionId, hit.Defense);
                 break;
         }
     }
@@ -247,7 +247,8 @@ public sealed class FightTracker
             if (targetIsAlly)
             {
                 Stats(tick.TargetId).HealingReceived += tick.Amount;
-                deaths.Heal(tick.TargetId, tick.Time, tick.SourceId, Current.TickKey(tick.StatusIds ?? [], true), tick.Amount, tick.Overheal, false, tick.Hp);
+                deaths.Heal(tick.TargetId, tick.Time, tick.SourceId, Current.TickKey(tick.StatusIds ?? [], true), tick.Amount, tick.Overheal, false,
+                    tick.Hp, tick.Defense);
             }
             return;
         }
@@ -270,7 +271,7 @@ public sealed class FightTracker
             AddEnemyDamage(tick.SourceOwnerId != 0 ? tick.SourceOwnerId : tick.SourceId, 0);
             RecordTick(victim.TakenAbilities, tick);
             deaths.Damage(tick.TargetId, tick.Time, tick.SourceId, Current!.TickKey(tick.StatusIds ?? [], false), tick.Amount,
-                false, false, false, false, tick.Hp);
+                false, false, false, false, tick.Hp, tick.Defense);
         }
     }
 
