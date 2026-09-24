@@ -75,9 +75,10 @@ public sealed class SettingsWindow : Window
         ImGui.TextUnformatted("Names:");
         changed |= EnumRadio("Full", NameDisplay.Full, () => Config.NameDisplay, v => Config.NameDisplay = v);
         ImGui.SameLine();
-        changed |= EnumRadio("Initials", NameDisplay.Initials, () => Config.NameDisplay, v => Config.NameDisplay = v);
+        changed |= EnumRadio("Short surname (Iluay D.)", NameDisplay.SurnameInitial, () => Config.NameDisplay, v => Config.NameDisplay = v);
         ImGui.SameLine();
-        changed |= EnumRadio("\"YOU\" for me", NameDisplay.YouForSelf, () => Config.NameDisplay, v => Config.NameDisplay = v);
+        changed |= EnumRadio("Initials (I. D.)", NameDisplay.Initials, () => Config.NameDisplay, v => Config.NameDisplay = v);
+        changed |= Checkbox("Show \"YOU\" instead of my name", () => Config.YouForSelf, v => Config.YouForSelf = v);
 
         ImGui.TextUnformatted("Gauge:");
         changed |= EnumRadio("Thin underline", GaugeStyle.Underline, () => Config.GaugeStyle, v => Config.GaugeStyle = v);
@@ -94,7 +95,8 @@ public sealed class SettingsWindow : Window
     {
         var changed = false;
 
-        using (Disabled(Config.NeverDeleteFights))
+        changed |= Checkbox("Automatically delete saved fights", () => Config.AutoDeleteFights, v => Config.AutoDeleteFights = v);
+        using (Disabled(!Config.AutoDeleteFights))
         {
             var unit = Config.RetentionUnit;
             var value = RetentionPeriod.ToDisplay(Config.RetentionHours, unit);
@@ -111,7 +113,6 @@ public sealed class SettingsWindow : Window
             ImGui.TextDisabled($"Keep fights for: {RetentionPeriod.Describe(Config.RetentionHours)}");
         }
 
-        changed |= Checkbox("Never delete saved fights", () => Config.NeverDeleteFights, v => Config.NeverDeleteFights = v);
 
         ImGui.Spacing();
         changed |= Checkbox("Skip fights shorter than", () => Config.SkipShortFights, v => Config.SkipShortFights = v);

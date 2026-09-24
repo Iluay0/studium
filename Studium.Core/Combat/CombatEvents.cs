@@ -27,7 +27,8 @@ public sealed record ActionHitEvent(
     HitKind Kind,
     long Amount,
     bool Crit,
-    bool DirectHit) : CombatEvent(Time);
+    bool DirectHit,
+    long Overheal = 0) : CombatEvent(Time);
 
 /// <summary>A DoT or HoT tick. The game names the source on the tick itself.</summary>
 public sealed record PeriodicTickEvent(
@@ -36,7 +37,18 @@ public sealed record PeriodicTickEvent(
     uint SourceOwnerId,
     uint TargetId,
     bool IsHeal,
-    long Amount) : CombatEvent(Time);
+    long Amount,
+    long Overheal = 0) : CombatEvent(Time);
+
+public static class Overheal
+{
+    /// <summary>
+    /// Healing beyond the target's missing HP, read when the heal arrives (before it's applied).
+    /// Approximate: heals landing in the same instant each see the same missing HP.
+    /// </summary>
+    public static long Estimate(long amount, uint currentHp, uint maxHp) =>
+        maxHp == 0 ? 0 : Math.Clamp(amount - Math.Max((long)maxHp - currentHp, 0), 0, amount);
+}
 
 public sealed record DeathEvent(DateTime Time, uint TargetId, uint SourceId) : CombatEvent(Time);
 

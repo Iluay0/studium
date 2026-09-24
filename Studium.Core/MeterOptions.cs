@@ -9,9 +9,12 @@ public enum MeterVisibility
 
 public enum NameDisplay
 {
+    /// <summary>Iluay Dory</summary>
     Full,
+    /// <summary>I. D.</summary>
     Initials,
-    YouForSelf,
+    /// <summary>Iluay D.</summary>
+    SurnameInitial,
 }
 
 public enum GaugeStyle

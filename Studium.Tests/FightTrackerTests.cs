@@ -216,4 +216,24 @@ public class FightTrackerTests
         Assert.NotSame(tracker.Last, tracker.Current);
         Assert.Equal(T0.AddSeconds(60), tracker.Current!.Start);
     }
+
+    [Fact]
+    public void OverhealIsSummedAndShownAsShareOfHealing()
+    {
+        tracker.Handle(Hit(0, Boss, Me, 1000));
+        tracker.Handle(Hit(1, Healer, Me, 800, HitKind.Heal) with { Overheal = 200 });
+        tracker.Handle(new PeriodicTickEvent(T0.AddSeconds(2), Healer, 0, Me, true, 200, Overheal: 200));
+
+        var row = FightView.Summarize(tracker.Current!, T0.AddSeconds(10), mergePets: true).Rows.Single(r => r.Id == Healer);
+        Assert.Equal(1000, row.Healing);
+        Assert.Equal(0.4, row.OverhealRate, 3);
+    }
+
+    [Theory]
+    [InlineData(500, 9000, 10000, 0)] // fits in missing HP
+    [InlineData(1500, 9000, 10000, 500)] // part overheal
+    [InlineData(800, 10000, 10000, 800)] // full HP: all overheal
+    [InlineData(800, 0, 0, 0)] // unknown HP: assume none
+    public void OverhealEstimate(long amount, uint current, uint max, long expected) =>
+        Assert.Equal(expected, Overheal.Estimate(amount, current, max));
 }

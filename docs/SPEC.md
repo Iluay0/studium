@@ -64,7 +64,7 @@ Reference implementations (read only, never copy verbatim):
   - **Heal:** Name, H%, HPS, Total, Overheal%, Crit%, Deaths. Labeled "excl. shields" until shield estimation ships.
 - **Rows:**
   - Game job icon (from game textures).
-  - Your own row highlighted.
+  - No row background highlight for yourself (the user found it distracting; revisit in the polish slice).
   - A gauge in job color, sized relative to the tab's top value. Style setting: **thin underline** (default) or **full-row background bar**.
   - Rows are sorted by the tab's main metric.
 - **Footer:** tab switcher; raid DPS and raid HPS (party totals, the same as kagerou's "rdps").
@@ -88,13 +88,13 @@ All options live here, never in the meter.
   - Visibility: always / in combat / in duty. Separate toggle: hide in cutscenes.
   - Lock position/size, click-through when locked.
   - Background opacity.
-  - Name display: full / initials / "YOU" for self.
+  - Name display: full (Iluay Dory) / short surname (Iluay D.) / initials (I. D.), plus a separate "show YOU for me" toggle.
   - Merge pets into owner.
   - Gauge style.
 - **History:**
   - **Retention slider:** 0–720 h with an hours/days unit toggle. Default 168 h (7 days).
     - `0` = this session only: fights are kept in memory and never written to disk.
-  - **Never delete saved fights:** off by default. When on, the slider is greyed out.
+  - **Automatically delete saved fights:** on by default, shown above the slider. When off, fights are kept forever and the slider is greyed out.
   - **Skip fights shorter than X s:** on by default, X = 10. Skipped fights are not saved at all.
   - **Hide fights shorter than Y s in lists:** default 15.
   - **Session split idle gap:** default 4 h.

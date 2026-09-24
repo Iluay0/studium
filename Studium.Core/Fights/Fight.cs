@@ -27,7 +27,9 @@ public sealed class CombatantStats
     public uint MaxHitActionId { get; set; }
 
     // Healing
+    /// <summary>Raw healing, overheal included (like ACT).</summary>
     public long Healing { get; set; }
+    public long Overheal { get; set; }
     public int HealHits { get; set; }
     public int HealCrits { get; set; }
 

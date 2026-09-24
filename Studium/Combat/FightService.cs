@@ -55,8 +55,12 @@ public sealed class FightService : ICombatWorld, IDisposable
 
     public bool IsAlly(uint entityId) => allies.Contains(entityId);
 
-    public ActorSnapshot? Lookup(uint entityId) =>
-        source.Actors.Get(entityId) is { } actor ? new ActorSnapshot(actor.Name, actor.ClassJobId, actor.OwnerId) : null;
+    /// <summary>Called once per combatant per fight, so it re-reads the actor: jobs can change between fights.</summary>
+    public ActorSnapshot? Lookup(uint entityId)
+    {
+        source.Actors.Refresh(entityId);
+        return source.Actors.Get(entityId) is { } actor ? new ActorSnapshot(actor.Name, actor.ClassJobId, actor.OwnerId) : null;
+    }
 
     public uint LocalPlayerId => objectTable.LocalPlayer?.EntityId ?? 0;
 

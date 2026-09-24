@@ -155,6 +155,7 @@ public sealed class FightTracker
                 {
                     var healer = Stats(hit.SourceId, hit.SourceOwnerId);
                     healer.Healing += hit.Amount;
+                    healer.Overheal += hit.Overheal;
                     healer.HealHits++;
                     if (hit.Crit)
                         healer.HealCrits++;
@@ -179,7 +180,11 @@ public sealed class FightTracker
             if (Current == null)
                 return;
             if (sourceIsAlly)
-                Stats(tick.SourceId, tick.SourceOwnerId).Healing += tick.Amount;
+            {
+                var healer = Stats(tick.SourceId, tick.SourceOwnerId);
+                healer.Healing += tick.Amount;
+                healer.Overheal += tick.Overheal;
+            }
             if (targetIsAlly)
                 Stats(tick.TargetId).HealingReceived += tick.Amount;
             return;

@@ -17,9 +17,17 @@ public sealed class ActorCache
 
     public ActorCache(IObjectTable objectTable) => this.objectTable = objectTable;
 
+    /// <summary>Records an actor the first time it's seen (cheap on repeat calls, which hooks make constantly).</summary>
     public void Observe(uint entityId)
     {
-        if (entityId == 0 || entityId == EffectDecoder.InvalidEntityId || actors.ContainsKey(entityId))
+        if (!actors.ContainsKey(entityId))
+            Refresh(entityId);
+    }
+
+    /// <summary>Re-reads an actor from the object table, e.g. to pick up a job change between fights.</summary>
+    public void Refresh(uint entityId)
+    {
+        if (entityId == 0 || entityId == EffectDecoder.InvalidEntityId)
             return;
         if (objectTable.SearchByEntityId(entityId) is not { } obj)
             return;

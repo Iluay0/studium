@@ -1,4 +1,5 @@
 using System.Numerics;
+using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Hooking;
 using Dalamud.Plugin.Services;
 using Studium.Core.Combat;
@@ -123,9 +124,10 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
 
                 // "Source entries" land on the caster (e.g. a self-heal riding on a damage action).
                 var effectTarget = decoded.TargetsSource ? casterId : targetId;
+                var overheal = decoded.Kind == HitKind.Heal ? OverhealOn(effectTarget, decoded.Amount) : 0;
                 EventReceived?.Invoke(new ActionHitEvent(
                     now, casterId, ownerId, effectTarget, header->ActionId, header->ActionType,
-                    decoded.Kind, decoded.Amount, decoded.Crit, decoded.DirectHit));
+                    decoded.Kind, decoded.Amount, decoded.Crit, decoded.DirectHit, overheal));
             }
         }
     }
@@ -147,7 +149,8 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
                     {
                         Actors.Observe(sourceId);
                         Actors.Observe(entityId);
-                        EventReceived?.Invoke(new PeriodicTickEvent(now, sourceId, Actors.OwnerOf(sourceId), entityId, isHeal, amount));
+                        var overheal = isHeal ? OverhealOn(entityId, amount) : 0;
+                        EventReceived?.Invoke(new PeriodicTickEvent(now, sourceId, Actors.OwnerOf(sourceId), entityId, isHeal, amount, overheal));
                     }
                     break;
                 case EffectDecoder.ActorControlDeath:
@@ -178,6 +181,11 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
 
         actorCastHook!.Original(entityId, packet);
     }
+
+    private long OverhealOn(uint targetId, long amount) =>
+        objectTable.SearchByEntityId(targetId) is ICharacter target
+            ? Overheal.Estimate(amount, target.CurrentHp, target.MaxHp)
+            : 0;
 
     private static uint NormalizeId(uint id) => id == EffectDecoder.InvalidEntityId ? 0 : id;
 }

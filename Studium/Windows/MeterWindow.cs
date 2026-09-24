@@ -4,6 +4,7 @@ using Dalamud.Interface;
 using Dalamud.Interface.Components;
 using Dalamud.Interface.GameFonts;
 using Dalamud.Interface.ManagedFontAtlas;
+using Dalamud.Interface.Textures;
 using Dalamud.Interface.Windowing;
 using Studium.Core;
 using Studium.Core.Fights;
@@ -30,7 +31,7 @@ public sealed class MeterWindow : Window, IDisposable
         headerFont = Plugin.PluginInterface.UiBuilder.FontAtlas.NewGameFontHandle(new GameFontStyle(GameFontFamilyAndSize.Axis18));
         Size = new Vector2(560, 260);
         SizeCondition = ImGuiCond.FirstUseEver;
-        SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(320, 120) };
+        SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(320, 80) };
 
         // Dalamud only honours IsPinned/IsClickthrough while these are on. They also add Dalamud's
         // title-bar menu (☰), which is the escape hatch out of click-through; PreDraw syncs it with our config.
@@ -172,7 +173,7 @@ public sealed class MeterWindow : Window, IDisposable
             new("H%", r => Percent(r.HealingShare)),
             new("HPS", r => r.Hps.ToString("N0")),
             new("Total", r => Compact(r.Healing)),
-            new("Overheal", _ => "—"),
+            new("Overheal", r => Percent(r.OverhealRate)),
             new("Crit", r => Percent(r.HealCritRate)),
             new("Deaths", r => r.Deaths.ToString()),
         ],
@@ -189,11 +190,12 @@ public sealed class MeterWindow : Window, IDisposable
         ],
     };
 
-    private static IEnumerable<CombatantRow> Sorted(IEnumerable<CombatantRow> rows, MeterTab tab) => tab switch
+    /// <summary>The value each tab sorts by and sizes its gauges against.</summary>
+    private static long MainMetric(CombatantRow row, MeterTab tab) => tab switch
     {
-        MeterTab.Tank => rows.OrderByDescending(r => r.DamageTaken),
-        MeterTab.Heal => rows.OrderByDescending(r => r.Healing),
-        _ => rows.OrderByDescending(r => r.Damage),
+        MeterTab.Tank => row.DamageTaken,
+        MeterTab.Heal => row.Healing,
+        _ => row.Damage,
     };
 
     private void DrawTable(Vector2 size, FightSummary? summary)
@@ -216,13 +218,22 @@ public sealed class MeterWindow : Window, IDisposable
         var localId = plugin.Fights.LocalPlayerId;
         if (summary != null)
         {
-            foreach (var row in Sorted(summary.Rows, Config.MeterTab))
-            {
-                ImGui.TableNextRow();
-                if (row.Id == localId)
-                    ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg0, ImGui.GetColorU32(ImGuiCol.Header));
+            var tab = Config.MeterTab;
+            var rows = summary.Rows.OrderByDescending(r => MainMetric(r, tab)).ToList();
+            var top = rows.Count > 0 ? Math.Max(MainMetric(rows[0], tab), 1) : 1;
+            var lineHeight = ImGui.GetTextLineHeight();
+            var rowHeight = lineHeight + (ImGui.GetStyle().CellPadding.Y * 2);
 
-                foreach (var column in columns)
+            foreach (var row in rows)
+            {
+                var isSelf = row.Id == localId;
+                ImGui.TableNextRow(ImGuiTableRowFlags.None, rowHeight);
+
+                ImGui.TableNextColumn();
+                DrawGauge(row, (double)MainMetric(row, tab) / top, tableTopLeft.X, tableSize.X, rowHeight);
+                DrawNameCell(row, isSelf, lineHeight);
+
+                foreach (var column in columns.Skip(1))
                 {
                     ImGui.TableNextColumn();
                     ImGui.TextUnformatted(column.Value(row));
@@ -238,6 +249,52 @@ public sealed class MeterWindow : Window, IDisposable
         if (summary == null)
             DrawCentredText("Waiting for combat…", tableTopLeft, tableSize);
     }
+
+    /// <summary>
+    /// Job-coloured bar across the whole row, drawn from the first cell so later columns' text sits on top.
+    /// Its length is this row's share of the tab's top value.
+    /// </summary>
+    private void DrawGauge(CombatantRow row, double fraction, float tableLeft, float tableWidth, float rowHeight)
+    {
+        if (fraction <= 0)
+            return;
+
+        var rowTop = ImGui.GetCursorScreenPos().Y - ImGui.GetStyle().CellPadding.Y;
+        var rowBottom = rowTop + rowHeight;
+        var right = tableLeft + (float)(tableWidth * Math.Min(fraction, 1));
+        var rgb = Jobs.Rgb(row.JobId);
+
+        ImGui.PushClipRect(new Vector2(tableLeft, rowTop), new Vector2(tableLeft + tableWidth, rowBottom), false);
+        var drawList = ImGui.GetWindowDrawList();
+        if (Config.GaugeStyle == GaugeStyle.Background)
+            drawList.AddRectFilled(new Vector2(tableLeft, rowTop), new Vector2(right, rowBottom), ToImGuiColor(rgb, 0x59));
+        else
+            drawList.AddRectFilled(new Vector2(tableLeft, rowBottom - 2), new Vector2(right, rowBottom), ToImGuiColor(rgb, 0xFF));
+        ImGui.PopClipRect();
+    }
+
+    private void DrawNameCell(CombatantRow row, bool isSelf, float iconSize)
+    {
+        var iconId = Jobs.IconId(row.JobId);
+        if (iconId != 0)
+        {
+            var icon = Plugin.TextureProvider.GetFromGameIcon(new GameIconLookup(iconId)).GetWrapOrEmpty();
+            ImGui.Image(icon.Handle, new Vector2(iconSize));
+        }
+        else
+        {
+            ImGui.Dummy(new Vector2(iconSize)); // pets and NPCs: keep names aligned
+        }
+
+        ImGui.SameLine();
+        // Only player names (they have a job) get shortened; pet names stay as the game names them.
+        var name = row.JobId != 0 ? NameFormatter.Format(row.Name, isSelf, Config.NameDisplay, Config.YouForSelf) : row.Name;
+        ImGui.TextUnformatted(name);
+    }
+
+    /// <summary>0xRRGGBB + alpha → ImGui's packed ABGR.</summary>
+    private static uint ToImGuiColor(uint rgb, byte alpha) =>
+        ((uint)alpha << 24) | ((rgb & 0xFF) << 16) | (rgb & 0xFF00) | ((rgb >> 16) & 0xFF);
 
     private static string FormatDuration(TimeSpan duration) =>
         duration.TotalHours >= 1 ? duration.ToString(@"h\:mm\:ss") : duration.ToString(@"mm\:ss");
