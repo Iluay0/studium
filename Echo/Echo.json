@@ -1,0 +1,8 @@
+{
+    "Author": "dory",
+    "Name": "Echo",
+    "Punchline": "In-game DPS meter and fight history.",
+    "Description": "Live DPS/tank/heal meter with persistent, browsable fight history. /echo or /dps to open.",
+    "InternalName": "Echo",
+    "Tags": ["dps", "meter", "parsing"]
+}
