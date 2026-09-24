@@ -44,6 +44,12 @@ public sealed class MeterWindow : Window, IDisposable
 
     public void Dispose() => headerFont.Dispose();
 
+    /// <summary>Whether the "Show meter" setting currently allows the meter (it stays open, just not drawn).</summary>
+    public bool AllowedByVisibility =>
+        MeterVisibilityRules.ShouldShow(Config.Visibility, plugin.Fights.PartyInCombat, plugin.Fights.InDuty, plugin.Fights.Tracker.Current != null);
+
+    public override bool DrawConditions() => AllowedByVisibility;
+
     public override void OnOpen() => SetOpenState(true);
 
     public override void OnClose() => SetOpenState(false);

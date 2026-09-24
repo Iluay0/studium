@@ -46,5 +46,13 @@ public class Configuration : IPluginConfiguration
         return true;
     }
 
-    public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
+    /// <summary>Raised after every save, so settings that live outside our windows can be re-applied.</summary>
+    [Newtonsoft.Json.JsonIgnore]
+    public Action? Saved;
+
+    public void Save()
+    {
+        Plugin.PluginInterface.SavePluginConfig(this);
+        Saved?.Invoke();
+    }
 }

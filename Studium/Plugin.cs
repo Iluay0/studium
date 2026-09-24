@@ -76,6 +76,9 @@ public sealed class Plugin : IDalamudPlugin
                 });
             }
 
+            ApplyUiHide();
+            Configuration.Saved += ApplyUiHide;
+
             PluginInterface.UiBuilder.Draw += windowSystem.Draw;
             PluginInterface.UiBuilder.OpenMainUi += ToggleMeter;
             PluginInterface.UiBuilder.OpenConfigUi += OpenSettings;
@@ -106,7 +109,18 @@ public sealed class Plugin : IDalamudPlugin
         CombatEvents.Dispose();
     }
 
-    public void ToggleMeter() => MeterWindow.Toggle();
+    public void ToggleMeter()
+    {
+        MeterWindow.Toggle();
+        if (MeterWindow.IsOpen && !MeterWindow.AllowedByVisibility)
+        {
+            var when = Configuration.Visibility == Core.MeterVisibility.InDuty ? "in duties" : "in combat";
+            ChatGui.Print($"[Studium] The meter is open but only shows {when}. Change it in /dps config → Meter → Show meter.");
+        }
+    }
+
+    /// <summary>Dalamud hides plugin windows in cutscenes by default; our setting decides.</summary>
+    private void ApplyUiHide() => PluginInterface.UiBuilder.DisableCutsceneUiHide = !Configuration.HideInCutscenes;
 
     public void OpenSettings()
     {

@@ -96,10 +96,18 @@ public sealed class FightService : ICombatWorld, IDisposable
 
     private void OnEvent(CombatEvent e) => Tracker.Handle(e);
 
+    /// <summary>You or a party member is in combat (as of the last frame).</summary>
+    public bool PartyInCombat { get; private set; }
+
+    /// <summary>Inside a duty instance (as of the last frame).</summary>
+    public bool InDuty { get; private set; }
+
     private void OnFrameworkUpdate(IFramework _)
     {
         RefreshAllies();
-        Tracker.Update(DateTime.UtcNow, IsPartyInCombat());
+        PartyInCombat = IsPartyInCombat();
+        InDuty = condition[ConditionFlag.BoundByDuty] || condition[ConditionFlag.BoundByDuty56] || condition[ConditionFlag.BoundByDuty95];
+        Tracker.Update(DateTime.UtcNow, PartyInCombat);
     }
 
     private void RefreshAllies()

@@ -67,3 +67,16 @@ public class FflogsLinksTests
         Assert.Null(Studium.Core.FflogsLinks.CharacterUrl(3, "", "Iluay Dory"));
     }
 }
+
+public class MeterVisibilityTests
+{
+    [Theory]
+    [InlineData(Studium.Core.MeterVisibility.Always, false, false, false, true)]
+    [InlineData(Studium.Core.MeterVisibility.InCombat, false, true, false, false)]
+    [InlineData(Studium.Core.MeterVisibility.InCombat, true, false, false, true)]
+    [InlineData(Studium.Core.MeterVisibility.InCombat, false, false, true, true)] // fight on hold after combat dropped
+    [InlineData(Studium.Core.MeterVisibility.InDuty, true, false, true, false)]
+    [InlineData(Studium.Core.MeterVisibility.InDuty, false, true, false, true)]
+    public void Rules(Studium.Core.MeterVisibility visibility, bool inCombat, bool inDuty, bool fightRunning, bool expected) =>
+        Assert.Equal(expected, Studium.Core.MeterVisibilityRules.ShouldShow(visibility, inCombat, inDuty, fightRunning));
+}
