@@ -5,11 +5,12 @@ using Dalamud.Interface.Windowing;
 using Studium.Core;
 using Studium.Core.Fights;
 using Studium.Core.History;
+using Studium.Ui;
 
 namespace Studium.Windows;
 
 /// <summary>Every kept fight, grouped by play session, with filters, pinning and deletion.</summary>
-public sealed class HistoryWindow : Window
+public sealed class HistoryWindow : Theme.ThemedWindow
 {
     private const string DeletePopup = "Delete fight?##confirmDelete";
 
@@ -41,7 +42,8 @@ public sealed class HistoryWindow : Window
         var filter = new HistoryFilter(zoneFilter, jobFilter, characterFilter, clearsOnly, minSeconds.Value);
         var sessions = PlaySessions.Group(all.Where(filter.Matches), TimeSpan.FromHours(Config.SessionGapHours));
 
-        var footerHeight = ImGui.GetFrameHeightWithSpacing() + ImGui.GetStyle().ItemSpacing.Y;
+        // Footer: action buttons, then a line of help text.
+        var footerHeight = ImGui.GetFrameHeightWithSpacing() + ImGui.GetTextLineHeightWithSpacing() + ImGui.GetStyle().ItemSpacing.Y;
         DrawTable(sessions, new Vector2(0, -footerHeight));
         DrawActions(all);
     }
@@ -107,15 +109,19 @@ public sealed class HistoryWindow : Window
             var session = sessions[i];
             var start = session.Start.ToLocalTime();
             var end = session.End.ToLocalTime();
-            var label = $"{start:ddd d MMM, HH:mm} → {end:HH:mm} · {session.Fights.Count} fight{(session.Fights.Count == 1 ? "" : "s")}###{start.Ticks}";
+            var label = $"{start:ddd d MMM, HH:mm} → {end:HH:mm}   ·  {session.Fights.Count} fight{(session.Fights.Count == 1 ? "" : "s")}###{start.Ticks}";
             if (!ImGui.CollapsingHeader(label, i == 0 ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None))
                 continue;
 
-            if (!ImGui.BeginTable("##fights", Headers.Length, ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.Resizable))
+            var tableLeft = ImGui.GetCursorScreenPos().X;
+            var tableWidth = ImGui.GetContentRegionAvail().X;
+            // Fixed-fit, not resizable: every column fits its header and content. No saved settings, so
+            // widths remembered from older layouts can't clip headers.
+            if (!ImGui.BeginTable("##sessionFights", Headers.Length, ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.NoSavedSettings))
                 continue;
             foreach (var header in Headers)
                 ImGui.TableSetupColumn(header, header == "Fight" ? ImGuiTableColumnFlags.WidthStretch : ImGuiTableColumnFlags.None);
-            ImGui.TableHeadersRow();
+            Widgets.HeaderRow(Headers, tableLeft, tableWidth, rightAlignNumbers: false);
 
             foreach (var entry in session.Fights)
                 DrawRow(entry);
@@ -127,11 +133,15 @@ public sealed class HistoryWindow : Window
 
     private void DrawRow(FightIndexEntry entry)
     {
+        var lineHeight = ImGui.GetTextLineHeight();
         ImGui.TableNextRow();
         ImGui.TableNextColumn();
 
         // Full-row selectable; double-click opens the fight in the meter.
         var cellStart = ImGui.GetCursorPos();
+        ImGui.PushStyleColor(ImGuiCol.HeaderHovered, Theme.Hover);
+        ImGui.PushStyleColor(ImGuiCol.Header, Theme.Accent with { W = 0.14f });
+        ImGui.PushStyleColor(ImGuiCol.HeaderActive, Theme.Accent with { W = 0.2f });
         if (ImGui.Selectable($"##{entry.Id}", selectedId == entry.Id,
                 ImGuiSelectableFlags.SpanAllColumns | ImGuiSelectableFlags.AllowItemOverlap | ImGuiSelectableFlags.AllowDoubleClick))
         {
@@ -139,26 +149,28 @@ public sealed class HistoryWindow : Window
             if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
                 OpenInMeter(entry.Id);
         }
+        ImGui.PopStyleColor(3);
         ImGui.SetCursorPos(cellStart);
         if (entry.Pinned)
         {
             using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
-                ImGui.TextUnformatted(FontAwesomeIcon.Thumbtack.ToIconString());
+                ImGui.TextColored(Theme.Accent, FontAwesomeIcon.Thumbtack.ToIconString());
         }
 
-        Cell(entry.Start.ToLocalTime().ToString("HH:mm"));
-        Cell(entry.Name);
-        Cell(entry.Zone);
-        Cell(Format.Duration(TimeSpan.FromSeconds(entry.DurationSeconds)));
-        Cell(entry.Outcome switch
-        {
-            FightOutcome.Clear => "Clear",
-            FightOutcome.Wipe => "Wipe",
-            _ => "—",
-        });
-        Cell(Jobs.Abbreviation(entry.JobId));
-        Cell(entry.CharacterName);
-        Cell(entry.LocalDps.ToString("N0"));
+        Cell(entry.Start.ToLocalTime().ToString("HH:mm"), Theme.Muted);
+        Cell(entry.Name, Theme.Text);
+        Cell(entry.Zone, Theme.Muted);
+        ImGui.TableNextColumn();
+        Widgets.RightText(Format.Duration(TimeSpan.FromSeconds(entry.DurationSeconds)), Theme.Muted);
+        ImGui.TableNextColumn();
+        Widgets.OutcomeChip(entry.Outcome);
+        ImGui.TableNextColumn();
+        Widgets.GameIcon(Jobs.IconId(entry.JobId), lineHeight);
+        ImGui.SameLine(0, 5);
+        ImGui.TextColored(Theme.Muted, Jobs.Abbreviation(entry.JobId));
+        Cell(entry.CharacterName, Theme.Muted);
+        ImGui.TableNextColumn();
+        Widgets.RightText(entry.LocalDps.ToString("N0"), Theme.Bright);
     }
 
     private void DrawActions(IReadOnlyList<FightIndexEntry> all)
@@ -185,8 +197,7 @@ public sealed class HistoryWindow : Window
                 ImGui.OpenPopup(DeletePopup);
         }
 
-        ImGui.SameLine();
-        ImGui.TextDisabled("Pinned fights are never deleted by retention. Double-click a fight to open it.");
+        ImGui.TextColored(Theme.Dim, "Pinned fights are never deleted by retention. Double-click a fight to open it.");
 
         var popupOpen = true;
         if (ImGui.BeginPopupModal(DeletePopup, ref popupOpen, ImGuiWindowFlags.AlwaysAutoResize))
@@ -214,10 +225,10 @@ public sealed class HistoryWindow : Window
             plugin.MeterWindow.View(fight);
     }
 
-    private static void Cell(string text)
+    private static void Cell(string text, System.Numerics.Vector4 colour)
     {
         ImGui.TableNextColumn();
-        ImGui.TextUnformatted(text);
+        ImGui.TextColored(colour, text);
     }
 
     private static DisabledScope Disabled(bool disabled) => new(disabled);

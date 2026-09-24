@@ -66,10 +66,10 @@ Reference implementations (read only, never copy verbatim):
   - When the window is too narrow, columns drop from the right; Name and the tab's main number always stay.
 - **Rows:**
   - Game job icon (from game textures).
-  - No row background highlight for yourself (the user found it distracting; revisit in the polish slice).
+  - Your row: a 2 px accent edge on the left and a brighter name (no background highlight).
   - A gauge in job color, sized relative to the tab's top value. Style setting: **thin underline** (default) or **full-row background bar**.
   - Rows are sorted by the tab's main metric.
-- **Footer:** tab switcher; raid DPS and raid HPS (party totals, the same as kagerou's "rdps").
+- **Footer:** tab switcher; party totals as "Total DPS: X · HPS: Y" (the same number as kagerou's "rdps"), shortening as the window narrows.
 - **Click a row** to open the drill-down window.
 
 ### Drill-down window
@@ -85,12 +85,18 @@ Reference implementations (read only, never copy verbatim):
 - **Actions:** open in meter, pin/unpin (pinned fights are exempt from retention), delete.
 - History is **shared across characters**.
 
+### Look (approved mockup, 2026-09-24)
+- Studium's own fixed dark palette on the meter, breakdown and history windows, so the user's Dalamud theme doesn't leak in. The settings window keeps the player's own Dalamud theme. Dalamud's title bars keep their colours; the meter's title bar follows the meter opacity. Palette lives in `Studium/Ui/Theme.cs`.
+- Job colours are the only strong colours; a pale teal accent (#7FB8C2) marks the active tab, your row and pins. Clear green, Wipe red.
+- Numbers right-aligned; each tab's main number bright, the rest muted. Uppercase dim column headers with a hairline under them.
+- Flat icon buttons, flat text tabs with an accent underline, job-tinted row hover.
+
 ### Settings window
 All options live here, never in the meter.
 - **Meter:**
   - Visibility: always / in combat / in duty. Separate toggle: hide in cutscenes.
   - Lock position/size, click-through when locked.
-  - Background opacity.
+  - Background opacity, 0–100%. The meter's title bar follows it, and meter text has a dark shadow so it stays readable at any opacity.
   - Name display: full (Iluay Dory) / short surname (Iluay D.) / initials (I. D.), plus a separate "show YOU for me" toggle.
   - Merge pets into owner.
   - Gauge style.

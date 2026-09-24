@@ -71,10 +71,10 @@ public sealed class SettingsWindow : Window
         if (Config.LockMeter && Config.ClickThroughWhenLocked)
             ImGui.TextDisabled("The meter ignores the mouse. Hold Ctrl to interact with it.");
 
-        var opacity = Config.BackgroundOpacity * 100f;
-        if (ImGui.SliderFloat("Background opacity", ref opacity, 0f, 100f, "%.0f%%"))
+        var opacity = Configuration.ClampOpacity(Config.BackgroundOpacity) * 100f;
+        if (ImGui.SliderFloat("Background opacity", ref opacity, Configuration.MinOpacity * 100f, 100f, "%.0f%%"))
         {
-            Config.BackgroundOpacity = Math.Clamp(opacity / 100f, 0f, 1f);
+            Config.BackgroundOpacity = Configuration.ClampOpacity(opacity / 100f);
             changed = true;
         }
 

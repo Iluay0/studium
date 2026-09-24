@@ -10,6 +10,7 @@ public sealed class GameNames
     private readonly IDataManager dataManager;
     private readonly Dictionary<uint, string> actions = new();
     private readonly Dictionary<uint, string> zones = new();
+    private readonly Dictionary<uint, uint> actionIcons = new();
 
     public GameNames(IDataManager dataManager) => this.dataManager = dataManager;
 
@@ -22,6 +23,16 @@ public sealed class GameNames
         name = row is { } r ? r.Name.ExtractText() : string.Empty;
         actions[actionId] = name;
         return name;
+    }
+
+    /// <summary>The action's icon ID, or 0 when it has none.</summary>
+    public uint ActionIcon(uint actionId)
+    {
+        if (actionIcons.TryGetValue(actionId, out var icon))
+            return icon;
+        icon = dataManager.GetExcelSheet<LuminaAction>().GetRowOrDefault(actionId) is { } row ? row.Icon : 0u;
+        actionIcons[actionId] = icon;
+        return icon;
     }
 
     public string Zone(uint territoryId)

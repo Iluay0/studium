@@ -9,10 +9,11 @@ using Dalamud.Interface.Windowing;
 using Studium.Core;
 using Studium.Core.Fights;
 using Studium.Core.History;
+using Studium.Ui;
 
 namespace Studium.Windows;
 
-public sealed class MeterWindow : Window, IDisposable
+public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
 {
     private const string WindowId = "###StudiumMeter";
 
@@ -23,7 +24,6 @@ public sealed class MeterWindow : Window, IDisposable
     private readonly IFontHandle headerFont;
     /// <summary>A past fight picked from the dropdown or history; null shows the live/last fight.</summary>
     private Fight? viewedFight;
-    private bool restoreSavedTab = true;
     private bool? appliedLock;
     private bool? appliedClickThrough;
     private Configuration Config => plugin.Configuration;
@@ -56,14 +56,43 @@ public sealed class MeterWindow : Window, IDisposable
 
     public override void PreDraw()
     {
+        base.PreDraw();
         SyncLockState();
-        BgAlpha = Config.BackgroundOpacity;
+        var opacity = Configuration.ClampOpacity(Config.BackgroundOpacity);
+        BgAlpha = opacity;
+
+        // The title bar keeps the player's Dalamud colours but follows the meter's opacity.
+        var colours = ImGui.GetStyle().Colors;
+        foreach (var col in TitleColours)
+            ImGui.PushStyleColor(col, colours[(int)col] with { W = colours[(int)col].W * opacity });
 
         // ### keeps the window ID (position, size) stable while the visible title changes.
         WindowName = Plugin.DisplayName + (ClickThroughConfigured ? " (Click-through - Ctrl to interact)" : "") + WindowId;
     }
 
+    private static readonly ImGuiCol[] TitleColours = [ImGuiCol.TitleBg, ImGuiCol.TitleBgActive, ImGuiCol.TitleBgCollapsed];
+
+    public override void PostDraw()
+    {
+        ImGui.PopStyleColor(TitleColours.Length);
+        base.PostDraw();
+    }
+
     public override void Draw()
+    {
+        // Text shadows keep the meter readable over the game when its background is see-through.
+        Widgets.Shadow = true;
+        try
+        {
+            DrawMeter();
+        }
+        finally
+        {
+            Widgets.Shadow = false;
+        }
+    }
+
+    private void DrawMeter()
     {
         var tracker = plugin.Fights.Tracker;
         // A running fight takes over the meter. While it's on hold (out of combat, may still resume),
@@ -75,9 +104,8 @@ public sealed class MeterWindow : Window, IDisposable
         var summary = fight != null ? FightView.Summarize(fight, now, Config.MergePets) : null;
 
         DrawHeader(fight, now);
-        ImGui.Separator();
 
-        var footerHeight = ImGui.GetFrameHeightWithSpacing() + ImGui.GetStyle().ItemSpacing.Y;
+        var footerHeight = ImGui.GetFrameHeightWithSpacing() + ImGui.GetStyle().ItemSpacing.Y + 1;
         DrawTable(new Vector2(0, -footerHeight), fight, summary);
         DrawTabBar(summary);
     }
@@ -114,8 +142,8 @@ public sealed class MeterWindow : Window, IDisposable
     private bool ClickThroughConfigured => Config.LockMeter && Config.ClickThroughWhenLocked;
 
     /// <summary>
-    /// Timer on the left; fight name (the fight picker) and zone stacked beside it, cut to fit
-    /// before the buttons on the right.
+    /// Timer on the left; fight name (the fight picker, with outcome chip) and zone stacked beside it;
+    /// flat icon buttons on the right. As space runs out the zone goes first, then the fight name.
     /// </summary>
     private void DrawHeader(Fight? fight, DateTime now)
     {
@@ -132,55 +160,38 @@ public sealed class MeterWindow : Window, IDisposable
 
         ImGui.SetCursorPosY(rowTop + ((rowHeight - timerSize.Y) / 2));
         using (headerFont.Push())
-            ImGui.TextUnformatted(timerText);
+            Widgets.Text(Theme.Bright, timerText);
 
-        ImGui.SameLine();
+        ImGui.SameLine(0, 10);
         var textX = ImGui.GetCursorPosX();
-        var buttons = new[] { FontAwesomeIcon.History, FontAwesomeIcon.Cog };
-        var buttonsWidth = buttons.Sum(IconButtonWidth) + (style.ItemSpacing.X * (buttons.Length - 1));
-        var buttonsX = ImGui.GetContentRegionMax().X - buttonsWidth;
+        var buttonSize = ImGui.GetFrameHeight();
+        var buttonsX = ImGui.GetContentRegionMax().X - (buttonSize * 2) - 2;
         var textWidth = buttonsX - textX - style.ItemSpacing.X;
 
-        var blockTop = rowTop + ((rowHeight - textBlockHeight) / 2);
-        var name = fight?.Name ?? "No fight yet";
-        if (fight is { IsActive: false, Outcome: not FightOutcome.Unknown })
-            name += fight.Outcome == FightOutcome.Clear ? " · Clear" : " · Wipe";
+        var showName = textWidth >= 40;
+        var showZone = showName && !string.IsNullOrEmpty(fight?.Zone);
+        var blockHeight = showZone ? textBlockHeight : lineHeight;
+        var blockTop = rowTop + ((rowHeight - blockHeight) / 2);
 
-        ImGui.SetCursorPos(new Vector2(textX, blockTop));
-        DrawFightPicker(fight, name, textWidth);
-        if (!string.IsNullOrEmpty(fight?.Zone))
+        if (showName)
+        {
+            ImGui.SetCursorPos(new Vector2(textX, blockTop));
+            DrawFightPicker(fight, textWidth);
+        }
+        if (showZone)
         {
             ImGui.SetCursorPos(new Vector2(textX, blockTop + lineHeight));
-            ImGui.TextDisabled(Truncate(fight.Zone, textWidth));
+            Widgets.Text(Theme.Muted, Widgets.Truncate(fight!.Zone, textWidth));
         }
 
-        ImGui.SetCursorPos(new Vector2(buttonsX, rowTop + ((rowHeight - ImGui.GetFrameHeight()) / 2)));
-        if (ImGuiComponents.IconButton("##history", FontAwesomeIcon.History))
+        ImGui.SetCursorPos(new Vector2(buttonsX, rowTop + ((rowHeight - buttonSize) / 2)));
+        if (Widgets.FlatIconButton("##history", FontAwesomeIcon.History, "Fight history"))
             plugin.OpenHistory();
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Fight history");
-
-        ImGui.SameLine();
-        if (ImGuiComponents.IconButton("##settings", FontAwesomeIcon.Cog))
+        ImGui.SameLine(0, 2);
+        if (Widgets.FlatIconButton("##settings", FontAwesomeIcon.Cog, "Settings"))
             plugin.OpenSettings();
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Settings");
 
         ImGui.SetCursorPosY(rowTop + rowHeight + style.ItemSpacing.Y);
-    }
-
-    /// <summary>Cuts text to fit a width, ending in "...".</summary>
-    private static string Truncate(string text, float maxWidth)
-    {
-        if (ImGui.CalcTextSize(text).X <= maxWidth)
-            return text;
-        for (var length = text.Length - 1; length > 0; length--)
-        {
-            var candidate = text[..length].TrimEnd() + "...";
-            if (ImGui.CalcTextSize(candidate).X <= maxWidth)
-                return candidate;
-        }
-        return string.Empty;
     }
 
     /// <summary>Shows a past fight in the meter (from the history browser).</summary>
@@ -198,30 +209,49 @@ public sealed class MeterWindow : Window, IDisposable
     }
 
     /// <summary>The fight name doubles as the fight dropdown: this play session's fights for this character.</summary>
-    private void DrawFightPicker(Fight? shown, string label, float maxWidth)
+    private void DrawFightPicker(Fight? shown, float maxWidth)
     {
-        // Name plus a caret icon, as one clickable area. The icon comes from the icon font: the
-        // default font has no reliable arrow glyph.
+        // Name, outcome chip and a caret icon, as one clickable area. The caret comes from the icon
+        // font: the default font has no reliable arrow glyph.
         var caret = FontAwesomeIcon.CaretDown.ToIconString();
         float caretWidth;
         using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
             caretWidth = ImGui.CalcTextSize(caret).X;
-        var spacing = ImGui.GetStyle().ItemInnerSpacing.X;
-        var name = Truncate(label, Math.Max(maxWidth - spacing - caretWidth, 0));
-        var nameSize = new Vector2(ImGui.CalcTextSize(name).X, ImGui.GetTextLineHeight());
+        const float spacing = 5f;
+        var outcome = shown is { IsActive: false } ? shown.Outcome : FightOutcome.Unknown;
+        var chipText = outcome switch
+        {
+            FightOutcome.Clear => "Clear",
+            FightOutcome.Wipe => "Wipe",
+            _ => null,
+        };
+        var chipWidth = chipText != null ? ImGui.CalcTextSize(chipText).X + 10 + spacing : 0;
+        var name = Widgets.Truncate(shown?.Name ?? "No fight yet", Math.Max(maxWidth - chipWidth - spacing - caretWidth, 0));
+        var nameWidth = ImGui.CalcTextSize(name).X;
+        var lineHeight = ImGui.GetTextLineHeight();
 
         var start = ImGui.GetCursorPos();
-        if (ImGui.Selectable("##fightPicker", false, ImGuiSelectableFlags.None, new Vector2(nameSize.X + spacing + caretWidth, nameSize.Y)))
+        ImGui.PushStyleColor(ImGuiCol.HeaderHovered, Theme.Hover);
+        ImGui.PushStyleColor(ImGuiCol.HeaderActive, Theme.Hover);
+        var clicked = ImGui.Selectable("##fightPicker", false, ImGuiSelectableFlags.None, new Vector2(nameWidth + chipWidth + spacing + caretWidth, lineHeight));
+        ImGui.PopStyleColor(2);
+        if (clicked)
             ImGui.OpenPopup("##fights");
-        if (ImGui.IsItemHovered())
+        var hovered = ImGui.IsItemHovered();
+        if (hovered)
             ImGui.SetTooltip("Switch fight");
         var end = ImGui.GetCursorPos();
 
         ImGui.SetCursorPos(start);
-        ImGui.TextUnformatted(name);
+        Widgets.Text(Theme.Bright, name);
+        if (chipText != null)
+        {
+            ImGui.SameLine(0, spacing);
+            Widgets.Chip(chipText, outcome == FightOutcome.Clear ? Theme.Clear : Theme.Wipe);
+        }
         ImGui.SameLine(0, spacing);
         using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
-            ImGui.TextDisabled(caret);
+            Widgets.Text(hovered ? Theme.Text : Theme.Dim, caret);
         ImGui.SetCursorPos(end);
 
         if (!ImGui.BeginPopup("##fights"))
@@ -242,24 +272,18 @@ public sealed class MeterWindow : Window, IDisposable
 
         foreach (var entry in fights)
         {
-            var outcome = entry.Outcome switch
+            var entryOutcome = entry.Outcome switch
             {
                 FightOutcome.Clear => "  clear",
                 FightOutcome.Wipe => "  wipe",
                 _ => string.Empty,
             };
-            var text = $"{entry.Start.ToLocalTime():HH:mm}  {entry.Name}  {Format.Duration(TimeSpan.FromSeconds(entry.DurationSeconds))}{outcome}##{entry.Id}";
+            var text = $"{entry.Start.ToLocalTime():HH:mm}  {entry.Name}  {Format.Duration(TimeSpan.FromSeconds(entry.DurationSeconds))}{entryOutcome}##{entry.Id}";
             if (ImGui.Selectable(text, shown?.Id == entry.Id) && plugin.History.Open(entry.Id) is { } picked)
                 viewedFight = picked == tracker.Last ? null : picked;
         }
 
         ImGui.EndPopup();
-    }
-
-    private static float IconButtonWidth(FontAwesomeIcon icon)
-    {
-        using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
-            return ImGui.CalcTextSize(icon.ToIconString()).X + (ImGui.GetStyle().FramePadding.X * 2);
     }
 
     private sealed record Column(string Header, Func<CombatantRow, string> Value, Func<CombatantRow, string?>? Tooltip = null);
@@ -340,7 +364,7 @@ public sealed class MeterWindow : Window, IDisposable
     private void DrawTable(Vector2 size, Fight? fight, FightSummary? summary)
     {
         var tableTopLeft = ImGui.GetCursorScreenPos();
-        var tableSize = ImGui.GetContentRegionAvail() + size; // size.Y is negative: space kept for the tab bar
+        var tableSize = ImGui.GetContentRegionAvail() + size; // size.Y is negative: space kept for the footer
         var available = tableSize.X - ImGui.GetStyle().ScrollbarSize;
         var columns = FittingColumns(ColumnsFor(Config.MeterTab), summary?.Rows ?? [], available);
 
@@ -354,7 +378,7 @@ public sealed class MeterWindow : Window, IDisposable
             var flags = i == 0 ? ImGuiTableColumnFlags.WidthStretch : ImGuiTableColumnFlags.WidthFixed;
             ImGui.TableSetupColumn(columns[i].Header, flags);
         }
-        ImGui.TableHeadersRow();
+        Widgets.HeaderRow(columns.Select(c => c.Header).ToList(), tableTopLeft.X, tableSize.X);
 
         var localId = plugin.Fights.LocalPlayerId;
         if (fight != null && summary != null)
@@ -368,24 +392,29 @@ public sealed class MeterWindow : Window, IDisposable
             foreach (var row in rows)
             {
                 var isSelf = row.Id == localId;
+                var jobColour = Theme.Rgb(Jobs.Rgb(row.JobId));
                 ImGui.TableNextRow(ImGuiTableRowFlags.None, rowHeight);
 
                 ImGui.TableNextColumn();
-                DrawGauge(row, (double)MainMetric(row, tab) / top, tableTopLeft.X, tableSize.X, rowHeight);
+                DrawGauge(row, (double)MainMetric(row, tab) / top, tableTopLeft.X, tableSize.X, rowHeight, isSelf);
 
-                // Invisible full-row selectable: hover feedback, and a click opens the breakdown.
+                // Invisible full-row selectable: a faint job-coloured hover, and a click opens the breakdown.
                 var cellStart = ImGui.GetCursorPos();
+                ImGui.PushStyleColor(ImGuiCol.HeaderHovered, jobColour with { W = 0.10f });
+                ImGui.PushStyleColor(ImGuiCol.HeaderActive, jobColour with { W = 0.16f });
                 if (ImGui.Selectable($"##row{row.Id}", false, ImGuiSelectableFlags.SpanAllColumns | ImGuiSelectableFlags.AllowItemOverlap, new Vector2(0, lineHeight)))
                     plugin.DrillDownWindow.Show(fight, row.Id, tab);
+                ImGui.PopStyleColor(2);
                 ImGui.SetCursorPos(cellStart);
 
                 DrawNameCell(row, isSelf, lineHeight);
 
-                foreach (var column in columns.Skip(1))
+                for (var i = 1; i < columns.Length; i++)
                 {
                     ImGui.TableNextColumn();
-                    ImGui.TextUnformatted(column.Value(row));
-                    if (column.Tooltip?.Invoke(row) is { Length: > 0 } tooltip && ImGui.IsItemHovered())
+                    // The tab's main number (first after the name) is bright; the rest are muted.
+                    Widgets.RightText(columns[i].Value(row), i == 1 ? Theme.Bright : Theme.Muted);
+                    if (columns[i].Tooltip?.Invoke(row) is { Length: > 0 } tooltip && ImGui.IsItemHovered())
                         ImGui.SetTooltip(tooltip);
                 }
             }
@@ -400,44 +429,36 @@ public sealed class MeterWindow : Window, IDisposable
 
     /// <summary>
     /// Job-coloured bar across the whole row, drawn from the first cell so later columns' text sits on top.
-    /// Its length is this row's share of the tab's top value.
+    /// Its length is this row's share of the tab's top value. Your own row also gets an accent edge.
     /// </summary>
-    private void DrawGauge(CombatantRow row, double fraction, float tableLeft, float tableWidth, float rowHeight)
+    private void DrawGauge(CombatantRow row, double fraction, float tableLeft, float tableWidth, float rowHeight, bool isSelf)
     {
-        if (fraction <= 0)
-            return;
-
         var rowTop = ImGui.GetCursorScreenPos().Y - ImGui.GetStyle().CellPadding.Y;
         var rowBottom = rowTop + rowHeight;
-        var right = tableLeft + (float)(tableWidth * Math.Min(fraction, 1));
+        var right = tableLeft + (float)(tableWidth * Math.Clamp(fraction, 0, 1));
         var rgb = Jobs.Rgb(row.JobId);
 
         ImGui.PushClipRect(new Vector2(tableLeft, rowTop), new Vector2(tableLeft + tableWidth, rowBottom), false);
         var drawList = ImGui.GetWindowDrawList();
-        if (Config.GaugeStyle == GaugeStyle.Background)
-            drawList.AddRectFilled(new Vector2(tableLeft, rowTop), new Vector2(right, rowBottom), ToImGuiColor(rgb, 0x59));
-        else
-            drawList.AddRectFilled(new Vector2(tableLeft, rowBottom - 2), new Vector2(right, rowBottom), ToImGuiColor(rgb, 0xFF));
+        if (fraction > 0)
+        {
+            if (Config.GaugeStyle == GaugeStyle.Background)
+                drawList.AddRectFilled(new Vector2(tableLeft, rowTop + 1), new Vector2(right, rowBottom - 1), ToImGuiColor(rgb, 0x38), 2f);
+            else
+                drawList.AddRectFilled(new Vector2(tableLeft, rowBottom - 2), new Vector2(right, rowBottom), ToImGuiColor(rgb, 0xFF), 1f);
+        }
+        if (isSelf)
+            drawList.AddRectFilled(new Vector2(tableLeft, rowTop), new Vector2(tableLeft + 2, rowBottom), Theme.U32(Theme.Accent));
         ImGui.PopClipRect();
     }
 
     private void DrawNameCell(CombatantRow row, bool isSelf, float iconSize)
     {
-        var iconId = Jobs.IconId(row.JobId);
-        if (iconId != 0)
-        {
-            var icon = Plugin.TextureProvider.GetFromGameIcon(new GameIconLookup(iconId)).GetWrapOrEmpty();
-            ImGui.Image(icon.Handle, new Vector2(iconSize));
-        }
-        else
-        {
-            ImGui.Dummy(new Vector2(iconSize)); // pets and NPCs: keep names aligned
-        }
-
-        ImGui.SameLine();
+        Widgets.GameIcon(Jobs.IconId(row.JobId), iconSize); // pets and NPCs get an empty space so names line up
+        ImGui.SameLine(0, 6);
         // Only player names (they have a job) get shortened; pet names stay as the game names them.
         var name = row.JobId != 0 ? NameFormatter.Format(row.Name, isSelf, Config.NameDisplay, Config.YouForSelf) : row.Name;
-        ImGui.TextUnformatted(name);
+        Widgets.Text(isSelf ? Theme.Bright : Theme.Text, name);
     }
 
     /// <summary>0xRRGGBB + alpha → ImGui's packed ABGR.</summary>
@@ -448,81 +469,97 @@ public sealed class MeterWindow : Window, IDisposable
     {
         var textSize = ImGui.CalcTextSize(text);
         var position = topLeft + ((area - textSize) / 2);
-        ImGui.GetWindowDrawList().AddText(position, ImGui.GetColorU32(ImGuiCol.TextDisabled), text);
+        Widgets.DrawText(ImGui.GetWindowDrawList(), position, Theme.U32(Theme.Dim), text);
     }
 
+    private const float TabGap = 12f;
+
+    /// <summary>Flat text tabs with an accent underline on the active one; raid totals on the right.</summary>
     private void DrawTabBar(FightSummary? summary)
     {
+        var drawList = ImGui.GetWindowDrawList();
+        var lineY = ImGui.GetCursorScreenPos().Y;
+        var left = ImGui.GetWindowPos().X + ImGui.GetWindowContentRegionMin().X;
+        var right = ImGui.GetWindowPos().X + ImGui.GetWindowContentRegionMax().X;
+        drawList.AddLine(new Vector2(left, lineY), new Vector2(right, lineY), Theme.U32(Theme.Line));
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + 5);
+
+        var (shortLabels, raidParts) = FitFooter(summary);
         var lineStart = ImGui.GetCursorPos();
-        var (shortLabels, raidText) = FitFooter(summary);
+        var lineHeight = ImGui.GetTextLineHeight();
 
-        if (ImGui.BeginTabBar("##meterTabs"))
+        foreach (var (tab, label, shortLabel) in Tabs)
         {
-            foreach (var (tab, label, shortLabel) in Tabs)
+            var text = shortLabels ? shortLabel : label;
+            var size = new Vector2(ImGui.CalcTextSize(text).X, lineHeight + 4);
+            var start = ImGui.GetCursorScreenPos();
+            if (ImGui.InvisibleButton($"##tab{label}", size) && Config.MeterTab != tab)
             {
-                var flags = restoreSavedTab && Config.MeterTab == tab
-                    ? ImGuiTabItemFlags.SetSelected
-                    : ImGuiTabItemFlags.None;
-                // ### keeps the tab's identity when its label shortens.
-                if (!ImGui.BeginTabItem($"{(shortLabels ? shortLabel : label)}###{label}", flags))
-                    continue;
-
-                if (!restoreSavedTab && Config.MeterTab != tab)
-                {
-                    Config.MeterTab = tab;
-                    Config.Save();
-                }
-                ImGui.EndTabItem();
+                Config.MeterTab = tab;
+                Config.Save();
             }
-            ImGui.EndTabBar();
-            restoreSavedTab = false;
+            var selected = Config.MeterTab == tab;
+            var colour = selected || ImGui.IsItemHovered() ? Theme.Text : Theme.Dim;
+            Widgets.DrawText(drawList, start, Theme.U32(colour), text);
+            if (selected)
+                drawList.AddRectFilled(new Vector2(start.X, start.Y + size.Y - 2), new Vector2(start.X + size.X, start.Y + size.Y), Theme.U32(Theme.Accent));
+            ImGui.SameLine(0, TabGap);
         }
 
-        // Raid totals sit on the tab bar's line, right-aligned.
-        if (raidText.Length == 0)
+        // Raid totals sit on the tabs' line, right-aligned: labels muted, numbers bright.
+        if (raidParts.Count == 0)
+        {
+            ImGui.NewLine();
             return;
-        var textWidth = ImGui.CalcTextSize(raidText).X;
-        ImGui.SetCursorPos(new Vector2(ImGui.GetContentRegionMax().X - textWidth, lineStart.Y + ImGui.GetStyle().FramePadding.Y));
-        ImGui.TextUnformatted(raidText);
+        }
+        var width = raidParts.Sum(p => ImGui.CalcTextSize(p.Text).X);
+        ImGui.SetCursorPos(new Vector2(ImGui.GetContentRegionMax().X - width, lineStart.Y));
+        for (var i = 0; i < raidParts.Count; i++)
+        {
+            if (i > 0)
+                ImGui.SameLine(0, 0);
+            Widgets.Text(raidParts[i].Bright ? Theme.Text : Theme.Muted, raidParts[i].Text);
+        }
     }
+
+    private readonly record struct TextPart(string Text, bool Bright);
 
     /// <summary>
     /// Picks the longest raid-total text (and tab labels) that fit beside the tabs:
-    /// full → current tab's number only → compact number → short tab labels → no raid text.
+    /// "Total DPS: X · HPS: Y" → current tab's number only → compact number → short tab labels → no raid text.
     /// </summary>
-    private (bool ShortLabels, string RaidText) FitFooter(FightSummary? summary)
+    private (bool ShortLabels, IReadOnlyList<TextPart> Raid) FitFooter(FightSummary? summary)
     {
         var dps = summary?.RaidDps ?? 0;
         var hps = summary?.RaidHps ?? 0;
         var isHeal = Config.MeterTab == MeterTab.Heal;
-        var tabNumber = isHeal ? $"{hps:N0} hps" : $"{dps:N0} dps";
-        var compactNumber = isHeal ? $"{Format.Compact((long)hps)} hps" : $"{Format.Compact((long)dps)} dps";
+        TextPart[] tabNumber = isHeal ? [new($"{hps:N0}", true)] : [new($"{dps:N0}", true)];
+        TextPart[] compact = isHeal
+            ? [new(Format.Compact((long)hps), true), new(" HPS", false)]
+            : [new(Format.Compact((long)dps), true), new(" DPS", false)];
 
-        (bool, string)[] candidates =
+        (bool, TextPart[])[] candidates =
         [
-            (false, $"raid {dps:N0} dps · {hps:N0} hps" + (isHeal ? " (excl. shields)" : "")),
-            (false, $"raid {tabNumber}"),
-            (false, compactNumber),
-            (true, compactNumber),
-            (true, string.Empty),
+            (false, [new("Total DPS: ", false), new($"{dps:N0}", true), new(" · HPS: ", false), new($"{hps:N0}", true), new(isHeal ? " (excl. shields)" : "", false)]),
+            (false, [new(isHeal ? "Total HPS: " : "Total DPS: ", false), tabNumber[0]]),
+            (false, compact),
+            (true, compact),
+            (true, []),
         ];
 
         var available = ImGui.GetContentRegionAvail().X;
         var gap = ImGui.GetStyle().ItemSpacing.X * 2;
-        foreach (var (shortLabels, text) in candidates)
+        foreach (var (shortLabels, parts) in candidates)
         {
-            var textWidth = text.Length == 0 ? 0 : ImGui.CalcTextSize(text).X + gap;
+            var textWidth = parts.Length == 0 ? 0 : parts.Sum(p => ImGui.CalcTextSize(p.Text).X) + gap;
             if (TabsWidth(shortLabels) + textWidth <= available)
-                return (shortLabels, text);
+                return (shortLabels, parts);
         }
-        return (true, string.Empty);
+        return (true, []);
     }
 
-    private static float TabsWidth(bool shortLabels)
-    {
-        var style = ImGui.GetStyle();
-        return Tabs.Sum(t => ImGui.CalcTextSize(shortLabels ? t.ShortLabel : t.Label).X + (style.FramePadding.X * 2) + style.ItemInnerSpacing.X);
-    }
+    private static float TabsWidth(bool shortLabels) =>
+        Tabs.Sum(t => ImGui.CalcTextSize(shortLabels ? t.ShortLabel : t.Label).X + TabGap);
 
     private void SetOpenState(bool open)
     {

@@ -6,7 +6,7 @@ namespace Studium;
 [Serializable]
 public class Configuration : IPluginConfiguration
 {
-    public int Version { get; set; } = 2;
+    public int Version { get; set; } = 3;
 
     // Meter
     public bool MeterOpen { get; set; } = true;
@@ -15,7 +15,11 @@ public class Configuration : IPluginConfiguration
     public bool HideInCutscenes { get; set; } = true;
     public bool LockMeter { get; set; }
     public bool ClickThroughWhenLocked { get; set; }
+    /// <summary>Meter background (and title bar) opacity, 0–100%. Meter text has shadows, so it stays readable at 0%.</summary>
     public float BackgroundOpacity { get; set; } = 0.7f;
+    public const float MinOpacity = 0f;
+
+    public static float ClampOpacity(float opacity) => Math.Clamp(opacity, MinOpacity, 1f);
     public NameDisplay NameDisplay { get; set; } = NameDisplay.Full;
     public bool YouForSelf { get; set; }
     public bool MergePets { get; set; } = true;
@@ -37,12 +41,14 @@ public class Configuration : IPluginConfiguration
     /// <summary>Brings older saved configs up to date. Returns true if anything changed.</summary>
     public bool Migrate()
     {
-        if (Version >= 2)
+        if (Version >= 3)
             return false;
         // v2: the skip-short-fights default went from 10 s to 30 s; move users still on the old default.
-        if (SkipShortFightsSeconds == 10)
+        if (Version < 2 && SkipShortFightsSeconds == 10)
             SkipShortFightsSeconds = 30;
-        Version = 2;
+        // v3: opacity is kept within its allowed range.
+        BackgroundOpacity = ClampOpacity(BackgroundOpacity);
+        Version = 3;
         return true;
     }
 
