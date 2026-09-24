@@ -29,8 +29,10 @@ public sealed class CombatantStats
     public uint MaxHitActionId { get; set; }
 
     // Healing
-    /// <summary>Raw healing, overheal included (like ACT).</summary>
+    /// <summary>Raw healing, overheal included, plus damage absorbed by this player's shields (like ACT).</summary>
     public long Healing { get; set; }
+    /// <summary>The part of <see cref="Healing"/> that was damage absorbed by this player's shields.</summary>
+    public long Shielding { get; set; }
     public long Overheal { get; set; }
     public int HealHits { get; set; }
     public int HealCrits { get; set; }
@@ -72,6 +74,15 @@ public sealed class AbilityStats
     public static uint StatusIdOf(uint key) => key & ~StatusKeyFlag;
 
     public static bool IsComboKey(uint key) => (key & (StatusKeyFlag | ComboKeyFlag)) == ComboKeyFlag;
+
+    /// <summary>Damage absorbed by a shield status (e.g. Galvanize) is keyed by status ID with this bit set.</summary>
+    public const uint ShieldKeyFlag = 0x2000_0000;
+
+    public static uint ShieldKey(uint statusId) => statusId | ShieldKeyFlag;
+
+    public static bool IsShieldKey(uint key) => (key & (StatusKeyFlag | ComboKeyFlag | ShieldKeyFlag)) == ShieldKeyFlag;
+
+    public static uint ShieldStatusOf(uint key) => key & ~ShieldKeyFlag;
 
     public long Total { get; set; }
     public int Hits { get; set; }

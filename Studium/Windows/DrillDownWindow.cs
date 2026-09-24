@@ -355,7 +355,8 @@ public sealed class DrillDownWindow : Theme.ThemedWindow
     {
         (string Label, string Value)[] stats = tab switch
         {
-            MeterTab.Heal => [("HPS", row.Hps.ToString("N0")), ("Total", Format.Compact(row.Healing)), ("Overheal", Format.Percent(row.OverhealRate)), ("Crit", Format.Percent(row.HealCritRate)), ("Deaths", row.Deaths.ToString())],
+            MeterTab.Heal => [("HPS", row.Hps.ToString("N0")), ("Total", Format.Compact(row.Healing)), ("Heal", Format.Compact(row.Healing - row.Shielding)),
+                ("Shield", Format.Compact(row.Shielding)), ("Overheal", Format.Percent(row.OverhealRate)), ("Crit", Format.Percent(row.HealCritRate)), ("Deaths", row.Deaths.ToString())],
             MeterTab.Tank => [("Taken", Format.Compact(row.DamageTaken)), ("Parry", Format.Percent(row.ParryRate)), ("Block", Format.Percent(row.BlockRate)), ("Healed-on", Format.Compact(row.HealingReceived)), ("Deaths", row.Deaths.ToString())],
             _ => [("DPS", row.Dps.ToString("N0")), ("Total", Format.Compact(row.Damage)), ("Crit", Format.Percent(row.CritRate)), ("Direct hit", Format.Percent(row.DirectHitRate)), ("Deaths", row.Deaths.ToString())],
         };
@@ -404,8 +405,10 @@ public sealed class DrillDownWindow : Theme.ThemedWindow
         Number(Format.Compact(ability.Total), Theme.Bright);
         Number(Format.Percent(ability.Share), Theme.Muted);
         Number(ability.Hits.ToString("N0"), Theme.Muted);
-        Number(ability.IsTick ? "—" : Format.Percent(ability.CritRate), Theme.Muted);
-        Number(isHeal ? Format.Percent(ability.OverhealRate) : ability.IsTick ? "—" : Format.Percent(ability.DirectHitRate), Theme.Muted);
+        // Ticks carry no crit / DH data, and absorbed shields can't crit or overheal.
+        var isShield = AbilityStats.IsShieldKey(ability.ActionId);
+        Number(ability.IsTick || isShield ? "—" : Format.Percent(ability.CritRate), Theme.Muted);
+        Number(isShield ? "—" : isHeal ? Format.Percent(ability.OverhealRate) : ability.IsTick ? "—" : Format.Percent(ability.DirectHitRate), Theme.Muted);
         Number(ability.Average.ToString("N0"), Theme.Muted);
         Number(ability.Max.ToString("N0"), Theme.Muted);
 
@@ -429,6 +432,12 @@ public sealed class DrillDownWindow : Theme.ThemedWindow
     /// </summary>
     private void DrawKeyIcon(uint key, float size)
     {
+        if (AbilityStats.IsShieldKey(key))
+        {
+            var statusId = AbilityStats.ShieldStatusOf(key);
+            Widgets.GameIcon(statusId == 0 ? 0 : plugin.Names.Status(statusId).Icon, size);
+            return;
+        }
         if (!AbilityStats.IsTick(key))
         {
             Widgets.GameIcon(plugin.Names.ActionIcon(key), size);
@@ -459,6 +468,11 @@ public sealed class DrillDownWindow : Theme.ThemedWindow
     /// </summary>
     private string KeyName(uint key, bool isHeal)
     {
+        if (AbilityStats.IsShieldKey(key))
+        {
+            var statusId = AbilityStats.ShieldStatusOf(key);
+            return statusId == 0 ? "Shield (unknown)" : $"{plugin.Names.Status(statusId).Name} (shield)";
+        }
         if (!AbilityStats.IsTick(key))
         {
             var action = plugin.Names.Action(key);

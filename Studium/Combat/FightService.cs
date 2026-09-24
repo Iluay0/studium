@@ -122,7 +122,8 @@ public sealed class FightService : ICombatWorld, IDisposable
 
     /// <summary>
     /// Shields have no event of their own, so watch each party member's shield gauge. When it goes up,
-    /// credit the status that appeared with it (e.g. Brutal Shell) and whoever applied it.
+    /// credit the status that appeared with it (e.g. Brutal Shell) and whoever applied it; when it goes
+    /// down, the tracker decides whether that was damage absorbed or a shield expiring.
     /// </summary>
     private void WatchShields()
     {
@@ -138,6 +139,9 @@ public sealed class FightService : ICombatWorld, IDisposable
                 if (status.StatusId != 0)
                     statuses.Add(status.StatusId);
             }
+
+            if (lastDefense.TryGetValue(id, out var lastSeen) && shield < lastSeen.Shield && Tracker.Current != null)
+                Tracker.Handle(new ShieldLostEvent(DateTime.UtcNow, id, lastSeen.Shield, shield, member.MaxHp));
 
             if (lastDefense.TryGetValue(id, out var last) && shield > last.Shield && Tracker.Current != null)
             {

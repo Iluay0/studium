@@ -9,7 +9,7 @@ public class MeterColumnsTests
     {
         Assert.Equal(["DPS", "D%", "Total", "Crit", "DH", "Max hit", "Deaths"], MeterColumns.Resolve(null, MeterTab.Dps).Select(c => c.Header));
         Assert.Equal(["Taken", "T%", "Parry", "Block", "Healed-on", "Deaths"], MeterColumns.Resolve(null, MeterTab.Tank).Select(c => c.Header));
-        Assert.Equal(["HPS", "H%", "Total", "Overheal", "Heal crit", "Deaths"], MeterColumns.Resolve(null, MeterTab.Heal).Select(c => c.Header));
+        Assert.Equal(["HPS", "H%", "Total", "Heal", "Shield", "Overheal", "Heal crit", "Deaths"], MeterColumns.Resolve(null, MeterTab.Heal).Select(c => c.Header));
     }
 
     [Fact]

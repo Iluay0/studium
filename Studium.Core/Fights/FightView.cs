@@ -24,7 +24,8 @@ public sealed record CombatantRow(
     double BlockRate,
     long HealingReceived,
     int Hits = 0,
-    int Misses = 0);
+    int Misses = 0,
+    long Shielding = 0);
 
 /// <summary>
 /// One ability in a drill-down. <see cref="PetName"/> is set when the ability belongs to a merged pet.
@@ -93,14 +94,15 @@ public static class FightView
                 Share(healing, totalHealing),
                 healing / seconds,
                 Share(Count(m => m.HealCrits), healHits),
-                Share(Sum(m => m.Overheal), healing),
+                Share(Sum(m => m.Overheal), healing - Sum(m => m.Shielding)), // shields can't overheal
                 taken,
                 Share(taken, totalTaken),
                 Share(Count(m => m.Parried), hitsTaken),
                 Share(Count(m => m.Blocked), hitsTaken),
                 Sum(m => m.HealingReceived),
                 hits,
-                Count(m => m.Misses)));
+                Count(m => m.Misses),
+                Sum(m => m.Shielding)));
         }
 
         return new FightSummary(rows, totalDamage / seconds, totalHealing / seconds);

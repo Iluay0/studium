@@ -84,6 +84,13 @@ public sealed record ShieldGainedEvent(
     TargetHp Hp,
     DefenseSnapshot? Defense = null) : CombatEvent(Time);
 
+/// <summary>
+/// A party member's shield went down (seen on the game's shield gauge): either damage it absorbed or a
+/// shield expiring. The tracker tells them apart by whether the player was just hit.
+/// </summary>
+public sealed record ShieldLostEvent(DateTime Time, uint TargetId, byte ShieldPercentBefore, byte ShieldPercentAfter, uint MaxHp)
+    : CombatEvent(Time);
+
 public sealed record DeathEvent(DateTime Time, uint TargetId, uint SourceId) : CombatEvent(Time);
 
 public sealed record CastStartEvent(

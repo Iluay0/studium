@@ -35,6 +35,13 @@ public sealed class FightTracker
 
     private readonly ICombatWorld world;
     private readonly DeathRecorder deaths = new();
+    private readonly ShieldLedger shields = new();
+    private readonly Dictionary<uint, DateTime> lastHitOnAlly = new();
+    /// <summary>Gauge drops seen before their hit arrived: absorbed if a hit follows within the window, else expired.</summary>
+    private readonly List<(uint TargetId, DateTime Time, long Amount)> pendingDrops = new();
+
+    /// <summary>A shield gauge drop this soon after a hit is damage absorbed; later, it's a shield expiring.</summary>
+    public static readonly TimeSpan AbsorbWindow = TimeSpan.FromSeconds(2);
     private bool sawPartyInCombat;
 
     public FightTracker(ICombatWorld world) => this.world = world;
@@ -62,8 +69,15 @@ public sealed class FightTracker
                 break;
             case ShieldGainedEvent shield:
                 if (Current != null && world.IsAlly(shield.TargetId))
+                {
                     deaths.Shield(shield.TargetId, shield.Time, shield.SourceId, shield.StatusId, shield.ShieldPercentBefore,
                         shield.ShieldPercentAfter, shield.Hp, shield.Defense);
+                    shields.Gained(shield.TargetId, shield.StatusId, shield.SourceId,
+                        (long)(shield.ShieldPercentAfter - shield.ShieldPercentBefore) * shield.Hp.Max / 100);
+                }
+                break;
+            case ShieldLostEvent lost:
+                HandleShieldLost(lost);
                 break;
             case DeathEvent death:
                 if (Current == null)
@@ -92,6 +106,8 @@ public sealed class FightTracker
     {
         if (Current == null)
             return;
+
+        ExpirePendingDrops(now);
 
         if (partyInCombat || MainEnemyEngaged(Current))
         {
@@ -193,6 +209,7 @@ public sealed class FightTracker
                 AddEnemyDamage(hit.SourceOwnerId != 0 ? hit.SourceOwnerId : hit.SourceId, 0); // an enemy even if never hit back
                 deaths.Damage(hit.TargetId, hit.Time, hit.SourceId, hit.ActionId, hit.Amount, hit.Crit, hit.DirectHit,
                     hit.Kind == HitKind.ParriedDamage, hit.Kind == HitKind.BlockedDamage, hit.Hp, hit.Defense);
+                NoteHitOnAlly(hit.TargetId, hit.Time);
                 Ability(victim.TakenAbilities, hit.ActionId).Add(hit.Amount, hit.Crit, hit.DirectHit);
                 if (hit.Kind == HitKind.ParriedDamage)
                     victim.Parried++;
@@ -277,6 +294,7 @@ public sealed class FightTracker
             RecordTick(victim.TakenAbilities, tick);
             deaths.Damage(tick.TargetId, tick.Time, tick.SourceId, Current!.TickKey(tick.StatusIds ?? [], false), tick.Amount,
                 false, false, false, false, tick.Hp, tick.Defense);
+            NoteHitOnAlly(tick.TargetId, tick.Time);
         }
     }
 
@@ -300,6 +318,9 @@ public sealed class FightTracker
                 LocalPlayerId = context?.LocalPlayerId ?? 0,
             };
             deaths.Clear();
+            shields.Clear();
+            lastHitOnAlly.Clear();
+            pendingDrops.Clear();
             sawPartyInCombat = false;
         }
 
@@ -329,6 +350,64 @@ public sealed class FightTracker
         }
 
         return stats;
+    }
+
+    /// <summary>
+    /// A shield gauge went down. Right after a hit, that's damage absorbed: it counts as healing for whoever
+    /// cast the shield (like ACT), as its own "shield" ability. Otherwise a shield expired and is just dropped.
+    /// </summary>
+    private void HandleShieldLost(ShieldLostEvent lost)
+    {
+        if (Current == null || !world.IsAlly(lost.TargetId) || lost.MaxHp == 0)
+            return;
+
+        var amount = (long)(lost.ShieldPercentBefore - lost.ShieldPercentAfter) * lost.MaxHp / 100;
+        var justHit = lastHitOnAlly.TryGetValue(lost.TargetId, out var hitTime) && lost.Time - hitTime <= AbsorbWindow;
+        if (justHit)
+            CreditAbsorbed(lost.TargetId, amount);
+        else
+            pendingDrops.Add((lost.TargetId, lost.Time, amount)); // the hit's packet may still be on its way
+    }
+
+    /// <summary>A party member was hit: gauge drops that were waiting for a hit were damage absorbed.</summary>
+    private void NoteHitOnAlly(uint targetId, DateTime time)
+    {
+        lastHitOnAlly[targetId] = time;
+        for (var i = pendingDrops.Count - 1; i >= 0; i--)
+        {
+            var drop = pendingDrops[i];
+            if (drop.TargetId != targetId || time - drop.Time > AbsorbWindow)
+                continue;
+            pendingDrops.RemoveAt(i);
+            CreditAbsorbed(targetId, drop.Amount);
+        }
+    }
+
+    /// <summary>Drops no hit came for: shields that expired. Removed from the ledger, not credited.</summary>
+    private void ExpirePendingDrops(DateTime now)
+    {
+        for (var i = pendingDrops.Count - 1; i >= 0; i--)
+        {
+            var drop = pendingDrops[i];
+            if (now - drop.Time <= AbsorbWindow)
+                continue;
+            pendingDrops.RemoveAt(i);
+            shields.Expire(drop.TargetId, drop.Amount);
+        }
+    }
+
+    private void CreditAbsorbed(uint targetId, long amount)
+    {
+        foreach (var (statusId, sourceId, absorbed) in shields.Absorb(targetId, amount))
+        {
+            if (sourceId == 0 || !IsAllyOrAllyPet(sourceId, world.Lookup(sourceId)?.OwnerId ?? 0))
+                continue;
+            var caster = Stats(sourceId);
+            caster.Healing += absorbed;
+            caster.Shielding += absorbed;
+            Ability(caster.HealAbilities, AbilityStats.ShieldKey(statusId)).Add(absorbed);
+            Stats(targetId).HealingReceived += absorbed;
+        }
     }
 
     /// <summary>Credits a tick to the DoT / HoT (or combination of them) it came from.</summary>

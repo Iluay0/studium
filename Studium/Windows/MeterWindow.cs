@@ -546,7 +546,7 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
 
         (bool, TextPart[])[] candidates =
         [
-            (false, [new("Total DPS: ", false), new($"{dps:N0}", true), new(" · HPS: ", false), new($"{hps:N0}", true), new(isHeal ? " (excl. shields)" : "", false)]),
+            (false, [new("Total DPS: ", false), new($"{dps:N0}", true), new(" · HPS: ", false), new($"{hps:N0}", true)]),
             (false, [new(isHeal ? "Total HPS: " : "Total DPS: ", false), tabNumber[0]]),
             (false, compact),
             (true, compact),

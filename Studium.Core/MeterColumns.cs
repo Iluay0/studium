@@ -22,10 +22,12 @@ public static class MeterColumns
         new("hits", "Hits", "Damaging hits landed (not DoT ticks)", r => r.Hits.ToString("N0")),
         new("misses", "Misses", "Attacks that missed", r => r.Misses.ToString("N0")),
         new("deaths", "Deaths", "Deaths (click for the death recap)", r => r.Deaths.ToString()),
-        new("hps", "HPS", "Healing per second", r => r.Hps.ToString("N0")),
-        new("healShare", "H%", "Share of the party's healing", r => Format.Percent(r.HealingShare)),
-        new("healing", "Total", "Total healing, overheal included", r => Format.Compact(r.Healing)),
-        new("overheal", "Overheal", "Share of healing that was overheal", r => Format.Percent(r.OverhealRate)),
+        new("hps", "HPS", "Healing per second, shields included", r => r.Hps.ToString("N0")),
+        new("healShare", "H%", "Share of the party's healing, shields included", r => Format.Percent(r.HealingShare)),
+        new("heal", "Heal", "Healing done, overheal included (shields not included)", r => Format.Compact(r.Healing - r.Shielding)),
+        new("shield", "Shield", "Damage absorbed by this player's shields", r => Format.Compact(r.Shielding)),
+        new("healing", "Total", "Heal + Shield", r => Format.Compact(r.Healing)),
+        new("overheal", "Overheal", "Share of heals that was overheal (shields can't overheal)", r => Format.Percent(r.OverhealRate)),
         new("healCrit", "Heal crit", "Critical hit rate (healing)", r => Format.Percent(r.HealCritRate)),
         new("taken", "Taken", "Damage taken", r => Format.Compact(r.DamageTaken)),
         new("takenShare", "T%", "Share of the party's damage taken", r => Format.Percent(r.DamageTakenShare)),
@@ -40,7 +42,7 @@ public static class MeterColumns
     public static IReadOnlyList<string> Available(MeterTab tab) => tab switch
     {
         MeterTab.Tank => ["taken", "takenShare", "parry", "block", "healedOn", "deaths"],
-        MeterTab.Heal => ["hps", "healShare", "healing", "overheal", "healCrit", "deaths"],
+        MeterTab.Heal => ["hps", "healShare", "healing", "heal", "shield", "overheal", "healCrit", "deaths"],
         _ => ["dps", "dmgShare", "damage", "crit", "dh", "maxHit", "hits", "misses", "deaths"],
     };
 
