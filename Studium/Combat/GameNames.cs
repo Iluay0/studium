@@ -1,5 +1,6 @@
 using Dalamud.Plugin.Services;
 using LuminaAction = Lumina.Excel.Sheets.Action;
+using LuminaStatus = Lumina.Excel.Sheets.Status;
 using LuminaTerritory = Lumina.Excel.Sheets.TerritoryType;
 
 namespace Studium.Combat;
@@ -11,6 +12,9 @@ public sealed class GameNames
     private readonly Dictionary<uint, string> actions = new();
     private readonly Dictionary<uint, string> zones = new();
     private readonly Dictionary<uint, uint> actionIcons = new();
+    private readonly Dictionary<uint, StatusInfo> statuses = new();
+
+    public readonly record struct StatusInfo(string Name, uint Icon, bool IsDot, bool IsHot);
 
     public GameNames(IDataManager dataManager) => this.dataManager = dataManager;
 
@@ -33,6 +37,24 @@ public sealed class GameNames
         icon = dataManager.GetExcelSheet<LuminaAction>().GetRowOrDefault(actionId) is { } row ? row.Icon : 0u;
         actionIcons[actionId] = icon;
         return icon;
+    }
+
+    /// <summary>
+    /// Status name, icon and kind. The sheet has no DoT flag; its PartyListPriority groups them instead:
+    /// 10 on harmful statuses marks damage over time (Dia, Biolysis, bleeds; debuffs like Chain Stratagem are 50),
+    /// 5 on helpful ones marks healing over time (Regen, Medica III, Physis II).
+    /// </summary>
+    public StatusInfo Status(uint statusId)
+    {
+        if (statuses.TryGetValue(statusId, out var info))
+            return info;
+        info = dataManager.GetExcelSheet<LuminaStatus>().GetRowOrDefault(statusId) is { } row
+            ? new StatusInfo(row.Name.ExtractText(), row.Icon,
+                row.StatusCategory == 2 && row.PartyListPriority == 10,
+                row.StatusCategory == 1 && row.PartyListPriority == 5)
+            : default;
+        statuses[statusId] = info;
+        return info;
     }
 
     public string Zone(uint territoryId)

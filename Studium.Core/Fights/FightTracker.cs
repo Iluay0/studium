@@ -187,7 +187,7 @@ public sealed class FightTracker
                 var healer = Stats(tick.SourceId, tick.SourceOwnerId);
                 healer.Healing += tick.Amount;
                 healer.Overheal += tick.Overheal;
-                Ability(healer.HealAbilities, AbilityStats.HotKey).Add(tick.Amount, overheal: tick.Overheal);
+                RecordTick(healer.HealAbilities, tick);
             }
             if (targetIsAlly)
                 Stats(tick.TargetId).HealingReceived += tick.Amount;
@@ -202,14 +202,14 @@ public sealed class FightTracker
             var attacker = Stats(tick.SourceId, tick.SourceOwnerId);
             attacker.Damage += tick.Amount;
             attacker.DotDamage += tick.Amount;
-            Ability(attacker.DamageAbilities, AbilityStats.DotKey).Add(tick.Amount);
+            RecordTick(attacker.DamageAbilities, tick);
             AddEnemyDamage(tick.TargetId, tick.Amount);
         }
         if (targetIsAlly && !sourceIsAlly)
         {
             var victim = Stats(tick.TargetId);
             victim.DamageTaken += tick.Amount;
-            Ability(victim.TakenAbilities, AbilityStats.DotKey).Add(tick.Amount);
+            RecordTick(victim.TakenAbilities, tick);
         }
     }
 
@@ -262,6 +262,10 @@ public sealed class FightTracker
 
         return stats;
     }
+
+    /// <summary>Credits a tick to the DoT / HoT (or combination of them) it came from.</summary>
+    private void RecordTick(Dictionary<uint, AbilityStats> abilities, PeriodicTickEvent tick) =>
+        Ability(abilities, Current!.TickKey(tick.StatusIds ?? [], tick.IsHeal)).Add(tick.Amount, overheal: tick.Overheal);
 
     private static AbilityStats Ability(Dictionary<uint, AbilityStats> abilities, uint key)
     {

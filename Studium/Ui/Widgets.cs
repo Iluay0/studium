@@ -55,7 +55,8 @@ public static class Widgets
     /// A custom header row plus a line under it (instead of ImGui's header background). It's a normal row,
     /// not flagged as ImGui's header row, because ImGui leaves header rows out when auto-sizing columns.
     /// </summary>
-    public static void HeaderRow(IReadOnlyList<string> headers, float tableLeft, float tableWidth, bool rightAlignNumbers = true)
+    /// <returns>Screen Y of the line under the header: where the table's scrolling body starts.</returns>
+    public static float HeaderRow(IReadOnlyList<string> headers, float tableLeft, float tableWidth, bool rightAlignNumbers = true)
     {
         ImGui.TableNextRow();
         for (var i = 0; i < headers.Count; i++)
@@ -65,7 +66,25 @@ public static class Widgets
         }
         var y = ImGui.GetItemRectMax().Y + (ImGui.GetStyle().CellPadding.Y);
         ImGui.GetWindowDrawList().AddLine(new Vector2(tableLeft, y), new Vector2(tableLeft + tableWidth, y), Theme.U32(Theme.Line));
+        return y;
     }
+
+    /// <summary>
+    /// The visible part of a scrolling table's body: below its header, left of its scrollbar, inside its
+    /// scroll area. Call between BeginTable and EndTable (ImGui then reports the table's own scroll window).
+    /// Drawing that spans columns has to be clipped to this by hand, or it spills out when scrolled.
+    /// </summary>
+    public static (Vector2 Min, Vector2 Max) TableBodyRect(float headerBottom)
+    {
+        var position = ImGui.GetWindowPos();
+        var size = ImGui.GetWindowSize();
+        var scrollbar = ImGui.GetScrollMaxY() > 0 ? ImGui.GetStyle().ScrollbarSize : 0;
+        return (new Vector2(position.X, headerBottom), new Vector2(position.X + size.X - scrollbar, position.Y + size.Y));
+    }
+
+    /// <summary>Pushes a clip rect for <paramref name="min"/>..<paramref name="max"/>, limited to <paramref name="bounds"/>.</summary>
+    public static void PushClip(Vector2 min, Vector2 max, (Vector2 Min, Vector2 Max) bounds) =>
+        ImGui.PushClipRect(Vector2.Max(min, bounds.Min), Vector2.Max(Vector2.Max(min, bounds.Min), Vector2.Min(max, bounds.Max)), false);
 
     /// <summary>Flat icon button: no box until hovered, muted icon that brightens on hover.</summary>
     public static bool FlatIconButton(string id, FontAwesomeIcon icon, string tooltip)
@@ -119,16 +138,23 @@ public static class Widgets
         }
     }
 
-    /// <summary>A game icon at a square size, or an empty space of that size if there's none.</summary>
+    /// <summary>
+    /// A game icon inside a square of the given size, keeping its aspect ratio (status icons are taller
+    /// than wide). An empty square when there's no icon, so neighbouring text stays aligned.
+    /// </summary>
     public static void GameIcon(uint iconId, float size)
     {
-        if (iconId == 0)
+        var start = ImGui.GetCursorPos();
+        if (iconId != 0)
         {
-            ImGui.Dummy(new Vector2(size));
-            return;
+            var icon = Plugin.TextureProvider.GetFromGameIcon(new GameIconLookup(iconId)).GetWrapOrEmpty();
+            var scale = icon.Width > 0 && icon.Height > 0 ? size / Math.Max(icon.Width, icon.Height) : 1f;
+            var drawn = icon.Width > 0 && icon.Height > 0 ? new Vector2(icon.Width * scale, icon.Height * scale) : new Vector2(size);
+            ImGui.SetCursorPos(start + ((new Vector2(size) - drawn) / 2));
+            ImGui.Image(icon.Handle, drawn);
         }
-        var icon = Plugin.TextureProvider.GetFromGameIcon(new GameIconLookup(iconId)).GetWrapOrEmpty();
-        ImGui.Image(icon.Handle, new Vector2(size));
+        ImGui.SetCursorPos(start);
+        ImGui.Dummy(new Vector2(size));
     }
 
     /// <summary>Cuts text to fit a width, ending in "...".</summary>

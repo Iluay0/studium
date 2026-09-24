@@ -48,7 +48,7 @@ public sealed class Plugin : IDalamudPlugin
             Configuration.Save();
 
         Names = new GameNames(DataManager);
-        CombatEvents = new GameCombatEventSource(GameInterop, ObjectTable, Log);
+        CombatEvents = new GameCombatEventSource(GameInterop, ObjectTable, Log, Names);
 
         // Hooks are live from here on; if anything below fails, release them so the game isn't left hooked.
         try

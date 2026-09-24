@@ -30,7 +30,10 @@ public sealed record ActionHitEvent(
     bool DirectHit,
     long Overheal = 0) : CombatEvent(Time);
 
-/// <summary>A DoT or HoT tick. The game names the source on the tick itself.</summary>
+/// <summary>
+/// A DoT or HoT tick. The game names the source on the tick itself, but not which DoT / HoT it is:
+/// <see cref="StatusIds"/> are the source's DoTs (or HoTs) that were on the target when it ticked.
+/// </summary>
 public sealed record PeriodicTickEvent(
     DateTime Time,
     uint SourceId,
@@ -38,7 +41,8 @@ public sealed record PeriodicTickEvent(
     uint TargetId,
     bool IsHeal,
     long Amount,
-    long Overheal = 0) : CombatEvent(Time);
+    long Overheal = 0,
+    IReadOnlyList<uint>? StatusIds = null) : CombatEvent(Time);
 
 public static class Overheal
 {

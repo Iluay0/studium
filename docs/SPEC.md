@@ -75,7 +75,11 @@ Reference implementations (read only, never copy verbatim):
 ### Drill-down window
 - **Header:** the player's job, name, fight and duration, plus a summary: DPS, total, crit%, DH%, deaths.
 - **Per-ability table:** Ability, Total, %, Hits, Crit%, DH%, Avg, Max.
-- DoTs, auto-attacks and pets appear as their own ability rows. The game's tick packets don't say which DoT/HoT they belong to, so all of a player's DoT ticks share one "DoT ticks" row (same for HoTs).
+- DoTs, auto-attacks and pets appear as their own ability rows.
+- DoT / HoT ticks: the game sends one combined tick per source and target, with no status ID. Studium reads the source's DoTs (or HoTs) on the target at that moment (DoT = harmful status with PartyListPriority 10, HoT = helpful with 5). Tick rows sit in the main ability list, sorted by total:
+  - one status → "Dia (DoT)" with the status icon (exact);
+  - several → one row per combination, "DoT ticks (Caustic Bite + Stormbite)", exact total, never split (the user rejected estimated splits);
+  - none identified → "DoT ticks".
 - The breakdown follows the tab it was opened from: damage dealt (DPS), healing with overheal (Heal), or damage taken by enemy ability (Tank).
 
 ### History browser

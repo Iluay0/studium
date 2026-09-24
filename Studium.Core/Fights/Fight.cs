@@ -52,9 +52,26 @@ public sealed class CombatantStats
 
 public sealed class AbilityStats
 {
-    /// <summary>DoT ticks don't say which DoT they belong to, so all of a player's DoT ticks share one row.</summary>
+    /// <summary>Ticks that couldn't be tied to any DoT / HoT.</summary>
     public const uint DotKey = uint.MaxValue - 1;
     public const uint HotKey = uint.MaxValue - 2;
+
+    /// <summary>Ticks from exactly one status (e.g. Dia) are keyed by status ID with this bit set.</summary>
+    public const uint StatusKeyFlag = 0x8000_0000;
+
+    /// <summary>
+    /// Ticks while several of a player's DoTs (or HoTs) were up: the game sends them combined, so they're
+    /// keyed per combination (see <see cref="Fight.StatusCombos"/>), with this bit set.
+    /// </summary>
+    public const uint ComboKeyFlag = 0x4000_0000;
+
+    public static uint StatusKey(uint statusId) => statusId | StatusKeyFlag;
+
+    public static bool IsStatusKey(uint key) => (key & StatusKeyFlag) != 0 && key is not (DotKey or HotKey);
+
+    public static uint StatusIdOf(uint key) => key & ~StatusKeyFlag;
+
+    public static bool IsComboKey(uint key) => (key & (StatusKeyFlag | ComboKeyFlag)) == ComboKeyFlag;
 
     public long Total { get; set; }
     public int Hits { get; set; }
@@ -63,7 +80,7 @@ public sealed class AbilityStats
     public long Max { get; set; }
     public long Overheal { get; set; }
 
-    public static bool IsTick(uint key) => key is DotKey or HotKey;
+    public static bool IsTick(uint key) => key is DotKey or HotKey || IsStatusKey(key) || IsComboKey(key);
 
     public void Add(long amount, bool crit = false, bool directHit = false, long overheal = 0)
     {
@@ -109,6 +126,34 @@ public sealed class Fight
 
     public Dictionary<uint, CombatantStats> Combatants { get; init; } = new();
     public Dictionary<uint, EnemyStats> Enemies { get; init; } = new();
+
+    /// <summary>Combo tick keys → the statuses that were up together (sorted status IDs).</summary>
+    public Dictionary<uint, uint[]> StatusCombos { get; init; } = new();
+
+    /// <summary>
+    /// The ability key for a tick given the source's DoTs (or HoTs) on the target at that moment:
+    /// none → the generic tick row; one → that status; several → one row per combination (never split).
+    /// </summary>
+    public uint TickKey(IReadOnlyList<uint> statusIds, bool isHeal)
+    {
+        var ids = statusIds.Distinct().Order().ToArray();
+        switch (ids.Length)
+        {
+            case 0:
+                return isHeal ? AbilityStats.HotKey : AbilityStats.DotKey;
+            case 1:
+                return AbilityStats.StatusKey(ids[0]);
+        }
+
+        foreach (var (key, combo) in StatusCombos)
+        {
+            if (combo.SequenceEqual(ids))
+                return key;
+        }
+        var newKey = AbilityStats.ComboKeyFlag | (uint)StatusCombos.Count;
+        StatusCombos[newKey] = ids;
+        return newKey;
+    }
 
     /// <summary>The fight is named after the enemy that took the most damage.</summary>
     [JsonIgnore]

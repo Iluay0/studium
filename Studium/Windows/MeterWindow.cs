@@ -378,7 +378,7 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
             var flags = i == 0 ? ImGuiTableColumnFlags.WidthStretch : ImGuiTableColumnFlags.WidthFixed;
             ImGui.TableSetupColumn(columns[i].Header, flags);
         }
-        Widgets.HeaderRow(columns.Select(c => c.Header).ToList(), tableTopLeft.X, tableSize.X);
+        var body = Widgets.TableBodyRect(Widgets.HeaderRow(columns.Select(c => c.Header).ToList(), tableTopLeft.X, tableSize.X));
 
         var localId = plugin.Fights.LocalPlayerId;
         if (fight != null && summary != null)
@@ -396,7 +396,7 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
                 ImGui.TableNextRow(ImGuiTableRowFlags.None, rowHeight);
 
                 ImGui.TableNextColumn();
-                DrawGauge(row, (double)MainMetric(row, tab) / top, tableTopLeft.X, tableSize.X, rowHeight, isSelf);
+                DrawGauge(row, (double)MainMetric(row, tab) / top, tableTopLeft.X, tableSize.X, rowHeight, isSelf, body);
 
                 // Invisible full-row selectable: a faint job-coloured hover, and a click opens the breakdown.
                 var cellStart = ImGui.GetCursorPos();
@@ -431,14 +431,14 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
     /// Job-coloured bar across the whole row, drawn from the first cell so later columns' text sits on top.
     /// Its length is this row's share of the tab's top value. Your own row also gets an accent edge.
     /// </summary>
-    private void DrawGauge(CombatantRow row, double fraction, float tableLeft, float tableWidth, float rowHeight, bool isSelf)
+    private void DrawGauge(CombatantRow row, double fraction, float tableLeft, float tableWidth, float rowHeight, bool isSelf, (Vector2 Min, Vector2 Max) body)
     {
         var rowTop = ImGui.GetCursorScreenPos().Y - ImGui.GetStyle().CellPadding.Y;
         var rowBottom = rowTop + rowHeight;
         var right = tableLeft + (float)(tableWidth * Math.Clamp(fraction, 0, 1));
         var rgb = Jobs.Rgb(row.JobId);
 
-        ImGui.PushClipRect(new Vector2(tableLeft, rowTop), new Vector2(tableLeft + tableWidth, rowBottom), false);
+        Widgets.PushClip(new Vector2(tableLeft, rowTop), new Vector2(tableLeft + tableWidth, rowBottom), body);
         var drawList = ImGui.GetWindowDrawList();
         if (fraction > 0)
         {

@@ -39,7 +39,8 @@ public sealed record AbilityRow(
     long Average,
     long Max,
     double OverhealRate,
-    bool IsTick);
+    bool IsTick,
+    IReadOnlyList<uint> StatusIds);
 
 public sealed record FightSummary(IReadOnlyList<CombatantRow> Rows, double RaidDps, double RaidHps);
 
@@ -128,10 +129,17 @@ public static class FightView
                 e.Stats.Hits == 0 ? 0 : e.Stats.Total / e.Stats.Hits,
                 e.Stats.Max,
                 Share(e.Stats.Overheal, e.Stats.Total),
-                AbilityStats.IsTick(e.Key)))
+                AbilityStats.IsTick(e.Key),
+                TickStatuses(fight, e.Key)))
             .OrderByDescending(r => r.Total)
             .ToList();
     }
+
+    /// <summary>The statuses behind a tick row: one for a single DoT / HoT, several for a combination.</summary>
+    private static IReadOnlyList<uint> TickStatuses(Fight fight, uint key) =>
+        AbilityStats.IsStatusKey(key) ? [AbilityStats.StatusIdOf(key)]
+        : AbilityStats.IsComboKey(key) && fight.StatusCombos.TryGetValue(key, out var ids) ? ids
+        : [];
 
     private static Dictionary<uint, AbilityStats> Breakdown(CombatantStats stats, MeterTab tab) => tab switch
     {

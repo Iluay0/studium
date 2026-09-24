@@ -184,7 +184,8 @@ public sealed class DebugWindow : Window, IDisposable
     {
         ActionHitEvent hit => (hit.Kind.ToString(), hit.SourceId, hit.SourceOwnerId, hit.TargetId, ActionName(hit.ActionId),
             hit.Amount.ToString("N0"), $"{(hit.Crit ? "crit " : "")}{(hit.DirectHit ? "DH" : "")}"),
-        PeriodicTickEvent tick => (tick.IsHeal ? "HoT" : "DoT", tick.SourceId, tick.SourceOwnerId, tick.TargetId, "", tick.Amount.ToString("N0"), ""),
+        PeriodicTickEvent tick => (tick.IsHeal ? "HoT" : "DoT", tick.SourceId, tick.SourceOwnerId, tick.TargetId,
+            string.Join(" + ", (tick.StatusIds ?? []).Select(id => $"{names.Status(id).Name} ({id})")), tick.Amount.ToString("N0"), ""),
         DeathEvent death => ("Death", death.SourceId, 0, death.TargetId, "", "", ""),
         CastStartEvent cast => ("Cast", cast.SourceId, 0, cast.TargetId, ActionName(cast.ActionId), "", $"{cast.CastTime:0.0}s"),
         _ => (e.GetType().Name, 0, 0, 0, "", "", ""),

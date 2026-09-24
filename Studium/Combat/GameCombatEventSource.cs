@@ -46,10 +46,13 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
 
     public ActorCache Actors { get; }
 
-    public GameCombatEventSource(IGameInteropProvider interop, IObjectTable objectTable, IPluginLog log)
+    private readonly GameNames names;
+
+    public GameCombatEventSource(IGameInteropProvider interop, IObjectTable objectTable, IPluginLog log, GameNames names)
     {
         this.objectTable = objectTable;
         this.log = log;
+        this.names = names;
         Actors = new ActorCache(objectTable);
 
         actionEffectHook = TryHook<ReceiveActionEffectDelegate>(interop, "ActionEffect",
@@ -150,7 +153,8 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
                         Actors.Observe(sourceId);
                         Actors.Observe(entityId);
                         var overheal = isHeal ? OverhealOn(entityId, amount) : 0;
-                        EventReceived?.Invoke(new PeriodicTickEvent(now, sourceId, Actors.OwnerOf(sourceId), entityId, isHeal, amount, overheal));
+                        var statuses = TickCandidates(entityId, sourceId, isHeal, arg1);
+                        EventReceived?.Invoke(new PeriodicTickEvent(now, sourceId, Actors.OwnerOf(sourceId), entityId, isHeal, amount, overheal, statuses));
                     }
                     break;
                 case EffectDecoder.ActorControlDeath:
@@ -180,6 +184,29 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
         }
 
         actorCastHook!.Original(entityId, packet);
+    }
+
+    /// <summary>
+    /// Which of the source's DoTs (or HoTs) could this tick be? Ground effects name their status in arg1;
+    /// otherwise it's the source's matching statuses on the target right now.
+    /// </summary>
+    private IReadOnlyList<uint> TickCandidates(uint targetId, uint sourceId, bool isHeal, uint statusArg)
+    {
+        if (statusArg != 0)
+            return [statusArg];
+        if (objectTable.SearchByEntityId(targetId) is not IBattleChara target)
+            return [];
+
+        var candidates = new List<uint>(2);
+        foreach (var status in target.StatusList)
+        {
+            if (status.StatusId == 0 || status.SourceId != sourceId)
+                continue;
+            var info = names.Status(status.StatusId);
+            if (isHeal ? info.IsHot : info.IsDot)
+                candidates.Add(status.StatusId);
+        }
+        return candidates;
     }
 
     private long OverhealOn(uint targetId, long amount) =>
