@@ -1,6 +1,8 @@
-# Echo (DPSMeter)
+# Studium (DPSMeter)
 
-Standalone Dalamud plugin: in-game DPS meter and fight history. Commands: `/echo`, `/dps`.
+Previously named "Echo"; renamed because `/echo` is a built-in game chat command. Never register commands that shadow game commands.
+
+Standalone Dalamud plugin: in-game DPS meter and fight history. Commands: `/studium`, `/dps`.
 **Read `docs/SPEC.md` before any work.** It holds the agreed scope, non-goals and build order. Anything not listed in the spec is out of scope unless the user promotes it.
 
 ## Hard rules
@@ -23,6 +25,6 @@ Standalone Dalamud plugin: in-game DPS meter and fight history. Commands: `/echo
 - In-game: add the build output folder as a dev plugin location in Dalamud settings, then `/xlplugins` → load. The user runs the in-game checks. For each slice, tell them exactly what to test (target dummy first, then a duty).
 
 ## Layout
-- `Echo/`: the Dalamud plugin (hooks, windows, config). Output: `Echo/bin/Debug/Echo.dll`.
-- `Echo.Core/`: game-free logic (plain `net10.0`, no Dalamud references). Anything testable goes here.
-- `Echo.Tests/`: xunit tests for `Echo.Core`.
+- `Studium/`: the Dalamud plugin (hooks, windows, config). Output: `Studium/bin/Debug/Studium.dll`.
+- `Studium.Core/`: game-free logic (plain `net10.0`, no Dalamud references). Anything testable goes here.
+- `Studium.Tests/`: xunit tests for `Studium.Core`.

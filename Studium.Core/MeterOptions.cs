@@ -1,4 +1,4 @@
-namespace Echo.Core;
+namespace Studium.Core;
 
 public enum MeterVisibility
 {

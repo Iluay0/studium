@@ -1,27 +1,32 @@
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
+using Dalamud.Interface.Components;
+using Dalamud.Interface.GameFonts;
+using Dalamud.Interface.ManagedFontAtlas;
 using Dalamud.Interface.Windowing;
-using Echo.Core;
+using Studium.Core;
 
-namespace Echo.Windows;
+namespace Studium.Windows;
 
-public sealed class MeterWindow : Window
+public sealed class MeterWindow : Window, IDisposable
 {
-    private const string WindowId = "###EchoMeter";
+    private const string WindowId = "###StudiumMeter";
 
     private static readonly (MeterTab Tab, string Label)[] Tabs =
         [(MeterTab.Dps, "DPS"), (MeterTab.Tank, "Tank"), (MeterTab.Heal, "Heal")];
 
     private readonly Plugin plugin;
+    private readonly IFontHandle headerFont;
     private bool restoreSavedTab = true;
     private bool? appliedLock;
     private bool? appliedClickThrough;
     private Configuration Config => plugin.Configuration;
 
-    public MeterWindow(Plugin plugin) : base("Echo" + WindowId, ImGuiWindowFlags.NoScrollbar)
+    public MeterWindow(Plugin plugin) : base(Plugin.DisplayName + WindowId, ImGuiWindowFlags.NoScrollbar)
     {
         this.plugin = plugin;
+        headerFont = Plugin.PluginInterface.UiBuilder.FontAtlas.NewGameFontHandle(new GameFontStyle(GameFontFamilyAndSize.Axis18));
         Size = new Vector2(560, 260);
         SizeCondition = ImGuiCond.FirstUseEver;
         SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(320, 120) };
@@ -30,25 +35,9 @@ public sealed class MeterWindow : Window
         // title-bar menu (☰), which is the escape hatch out of click-through; PreDraw syncs it with our config.
         AllowPinning = true;
         AllowClickthrough = true;
-
-        TitleBarButtons =
-        [
-            new TitleBarButton
-            {
-                Icon = FontAwesomeIcon.Cog,
-                Priority = 1,
-                Click = _ => plugin.OpenSettings(),
-                ShowTooltip = () => ImGui.SetTooltip("Settings"),
-            },
-            new TitleBarButton
-            {
-                Icon = FontAwesomeIcon.History,
-                Priority = 2,
-                Click = _ => plugin.OpenHistory(),
-                ShowTooltip = () => ImGui.SetTooltip("Fight history"),
-            },
-        ];
     }
+
+    public void Dispose() => headerFont.Dispose();
 
     public override void OnOpen() => SetOpenState(true);
 
@@ -59,12 +48,15 @@ public sealed class MeterWindow : Window
         SyncLockState();
         BgAlpha = Config.BackgroundOpacity;
 
-        // Timer and encounter live in the title; ### keeps the window ID (position, size) stable.
-        WindowName = "00:00  No fight yet" + WindowId;
+        // ### keeps the window ID (position, size) stable while the visible title changes.
+        WindowName = Plugin.DisplayName + (ClickThroughConfigured ? " (Click-through - Ctrl to interact)" : "") + WindowId;
     }
 
     public override void Draw()
     {
+        DrawHeader();
+        ImGui.Separator();
+
         var footerHeight = ImGui.GetFrameHeightWithSpacing() + ImGui.GetStyle().ItemSpacing.Y;
         DrawTable(new Vector2(0, -footerHeight));
         DrawTabBar();
@@ -93,9 +85,53 @@ public sealed class MeterWindow : Window
             Config.Save();
 
         IsPinned = Config.LockMeter;
-        IsClickthrough = Config.LockMeter && Config.ClickThroughWhenLocked;
+        // Holding Ctrl temporarily makes a click-through meter interactive.
+        IsClickthrough = ClickThroughConfigured && !ImGui.GetIO().KeyCtrl;
         appliedLock = IsPinned;
         appliedClickThrough = IsClickthrough;
+    }
+
+    private bool ClickThroughConfigured => Config.LockMeter && Config.ClickThroughWhenLocked;
+
+    private void DrawHeader()
+    {
+        var rowTop = ImGui.GetCursorPosY();
+        float rowHeight;
+        using (headerFont.Push())
+        {
+            ImGui.TextUnformatted("00:00");
+            rowHeight = ImGui.GetItemRectSize().Y;
+        }
+
+        // Fight name in the normal font, vertically centred on the larger timer.
+        ImGui.SameLine();
+        ImGui.SetCursorPosY(rowTop + ((rowHeight - ImGui.GetTextLineHeight()) / 2));
+        ImGui.TextUnformatted("No fight yet");
+
+        var buttons = new[] { FontAwesomeIcon.History, FontAwesomeIcon.Cog };
+        var spacing = ImGui.GetStyle().ItemSpacing.X;
+        var buttonsWidth = buttons.Sum(IconButtonWidth) + (spacing * (buttons.Length - 1));
+        ImGui.SameLine(ImGui.GetContentRegionMax().X - buttonsWidth);
+        ImGui.SetCursorPosY(rowTop + ((rowHeight - ImGui.GetFrameHeight()) / 2));
+
+        if (ImGuiComponents.IconButton("##history", FontAwesomeIcon.History))
+            plugin.OpenHistory();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Fight history");
+
+        ImGui.SameLine();
+        if (ImGuiComponents.IconButton("##settings", FontAwesomeIcon.Cog))
+            plugin.OpenSettings();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Settings");
+
+        ImGui.SetCursorPosY(rowTop + rowHeight + ImGui.GetStyle().ItemSpacing.Y);
+    }
+
+    private static float IconButtonWidth(FontAwesomeIcon icon)
+    {
+        using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
+            return ImGui.CalcTextSize(icon.ToIconString()).X + (ImGui.GetStyle().FramePadding.X * 2);
     }
 
     private void DrawTable(Vector2 size)

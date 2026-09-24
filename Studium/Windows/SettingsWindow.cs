@@ -1,16 +1,16 @@
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
-using Echo.Core;
+using Studium.Core;
 
-namespace Echo.Windows;
+namespace Studium.Windows;
 
 public sealed class SettingsWindow : Window
 {
     private readonly Plugin plugin;
     private Configuration Config => plugin.Configuration;
 
-    public SettingsWindow(Plugin plugin) : base("Echo – Settings##settings")
+    public SettingsWindow(Plugin plugin) : base("Studium – Settings##settings")
     {
         this.plugin = plugin;
         Size = new Vector2(520, 420);
@@ -62,7 +62,7 @@ public sealed class SettingsWindow : Window
             changed |= Checkbox("Click-through when locked", () => Config.ClickThroughWhenLocked, v => Config.ClickThroughWhenLocked = v);
         }
         if (Config.LockMeter && Config.ClickThroughWhenLocked)
-            ImGui.TextDisabled("The meter ignores the mouse. To undo: the ☰ button on its title bar, or /echo config.");
+            ImGui.TextDisabled("The meter ignores the mouse. Hold Ctrl to interact with it.");
 
         var opacity = Config.BackgroundOpacity * 100f;
         if (ImGui.SliderFloat("Background opacity", ref opacity, 0f, 100f, "%.0f%%"))

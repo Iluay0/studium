@@ -3,24 +3,33 @@ using Dalamud.Interface.Windowing;
 using Dalamud.IoC;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
-using Echo.Windows;
+using Studium.Combat;
+using Studium.Windows;
 
-namespace Echo;
+namespace Studium;
 
 public sealed class Plugin : IDalamudPlugin
 {
-    private static readonly string[] Commands = ["/echo", "/dps"];
+    public const string DisplayName = "Studium";
+
+    private static readonly string[] Commands = ["/studium", "/dps"];
 
     [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
     [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
     [PluginService] internal static IChatGui ChatGui { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
+    [PluginService] internal static IGameInteropProvider GameInterop { get; private set; } = null!;
+    [PluginService] internal static IObjectTable ObjectTable { get; private set; } = null!;
+    [PluginService] internal static IPartyList PartyList { get; private set; } = null!;
+    [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
 
     public Configuration Configuration { get; }
 
-    private readonly WindowSystem windowSystem = new("Echo");
+    private readonly WindowSystem windowSystem = new("Studium");
     public MeterWindow MeterWindow { get; }
     public SettingsWindow SettingsWindow { get; }
+    public DebugWindow DebugWindow { get; }
+    public GameCombatEventSource CombatEvents { get; }
 
     public Plugin()
     {
@@ -28,8 +37,11 @@ public sealed class Plugin : IDalamudPlugin
 
         MeterWindow = new MeterWindow(this) { IsOpen = Configuration.MeterOpen };
         SettingsWindow = new SettingsWindow(this);
+        CombatEvents = new GameCombatEventSource(GameInterop, ObjectTable, Log);
+        DebugWindow = new DebugWindow(CombatEvents, ObjectTable, PartyList, DataManager);
         windowSystem.AddWindow(MeterWindow);
         windowSystem.AddWindow(SettingsWindow);
+        windowSystem.AddWindow(DebugWindow);
 
         foreach (var command in Commands)
         {
@@ -54,6 +66,9 @@ public sealed class Plugin : IDalamudPlugin
             CommandManager.RemoveHandler(command);
 
         windowSystem.RemoveAllWindows();
+        MeterWindow.Dispose();
+        DebugWindow.Dispose();
+        CombatEvents.Dispose();
     }
 
     public void ToggleMeter() => MeterWindow.Toggle();
@@ -65,7 +80,7 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     public void OpenHistory() =>
-        ChatGui.Print("[Echo] The history browser isn't built yet.");
+        ChatGui.Print("[Studium] The history browser isn't built yet.");
 
     private void OnCommand(string command, string args)
     {
@@ -81,8 +96,11 @@ public sealed class Plugin : IDalamudPlugin
             case "history":
                 OpenHistory();
                 break;
+            case "debug":
+                DebugWindow.Toggle();
+                break;
             default:
-                ChatGui.PrintError($"[Echo] Unknown subcommand \"{args.Trim()}\". Use {command}, {command} config or {command} history.");
+                ChatGui.PrintError($"[Studium] Unknown subcommand \"{args.Trim()}\". Use {command}, {command} config or {command} history.");
                 break;
         }
     }

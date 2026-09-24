@@ -13,6 +13,6 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\Echo.Core\Echo.Core.csproj" />
+        <ProjectReference Include="..\Studium.Core\Studium.Core.csproj" />
     </ItemGroup>
 </Project>

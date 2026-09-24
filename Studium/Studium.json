@@ -1,0 +1,8 @@
+{
+    "Author": "dory",
+    "Name": "Studium",
+    "Punchline": "In-game DPS meter and fight history.",
+    "Description": "Live DPS/tank/heal meter with persistent, browsable fight history. /studium or /dps to open.",
+    "InternalName": "Studium",
+    "Tags": ["dps", "meter", "parsing"]
+}

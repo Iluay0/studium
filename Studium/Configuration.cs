@@ -1,7 +1,7 @@
 using Dalamud.Configuration;
-using Echo.Core;
+using Studium.Core;
 
-namespace Echo;
+namespace Studium;
 
 [Serializable]
 public class Configuration : IPluginConfiguration

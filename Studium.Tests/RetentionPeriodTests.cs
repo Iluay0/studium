@@ -1,6 +1,6 @@
-using Echo.Core;
+using Studium.Core;
 
-namespace Echo.Tests;
+namespace Studium.Tests;
 
 public class RetentionPeriodTests
 {

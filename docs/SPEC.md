@@ -1,4 +1,6 @@
-# Echo — Spec
+# Studium — Spec
+
+(Named after Sharlayan's Studium, where scholars observe and record. Originally "Echo"; renamed because `/echo` is a game command.)
 
 In-game DPS meter and fight history for FFXIV, as a standalone Dalamud plugin.
 Scope agreed on 2026-09-24 through a grilling session. Anything not listed under **MVP** is out of scope until promoted.
@@ -22,10 +24,10 @@ Scope agreed on 2026-09-24 through a grilling session. Anything not listed under
 | Decision | Choice | Why |
 |---|---|---|
 | Combat data source | Own hooks via FFXIVClientStructs | No IINACT dependency. ClientStructs is fixed by the community after patches, whereas opcodes change every patch. |
-| Hook points | `ActionEffectHandler.Receive` for damage and heals (crit/DH, action ID). `PacketDispatcher.HandleActorControlPacket` for DoT/HoT ticks (category 0x17, source in arg), deaths and other actor control events. `PacketDispatcher.HandleActorCastPacket` for casts. | All three are resolved by ClientStructs. Avoid hand-rolled signatures. |
+| Hook points | `ActionEffectHandler.Receive` for damage and heals (crit/DH, action ID). `PacketDispatcher.HandleActorControlPacket` for DoT/HoT ticks (category 0x605 DoT / 0x604 HoT: arg2 = amount, arg3 = source; verified in-game), deaths and other actor control events. `PacketDispatcher.HandleActorCastPacket` for casts. | All three are resolved by ClientStructs. Avoid hand-rolled signatures. |
 | Buffs/statuses (for shields later) | Diff each actor's `StatusManager` per frame rather than hooking EffectResult | ClientStructs has no EffectResult entry point. A private signature would be ours alone to maintain after every patch. |
 | Pets | Merge into the owner via `GameObject.OwnerId` (toggle) | |
-| FFLogs logs | IINACT writes them. Echo only detects IINACT. | Writing the ACT format ourselves is 3–6 weeks, and the Uploader might still reject it. |
+| FFLogs logs | IINACT writes them. Studium only detects IINACT. | Writing the ACT format ourselves is 3–6 weeks, and the Uploader might still reject it. |
 | Storage | Per-fight summary files plus an index. The index loads at startup; a fight's full data loads when opened. | Instant startup with a month of history. |
 | Parser layer | Behind an interface (`ICombatEventSource`) that emits plain event records | Aggregation, storage and UI can be tested without the game. |
 
@@ -37,9 +39,9 @@ Reference implementations (read only, never copy verbatim):
 ## MVP
 
 ### Commands
-- `/echo` and `/dps` (aliases): toggle the meter.
-- `/echo config`: open the settings window.
-- `/echo history`: open the history browser.
+- `/studium` and `/dps` (aliases): toggle the meter.
+- `/studium config`: open the settings window.
+- `/studium history`: open the history browser.
 
 ### Fight lifecycle
 - **Start:** the first damage event involving a party member (or you, when solo).
@@ -129,7 +131,7 @@ All options live here, never in the meter.
 
 ## Build order (vertical slices)
 
-1. Plugin skeleton: `/echo` and `/dps`, empty meter window, settings window, config persistence.
+1. Plugin skeleton: `/studium` and `/dps`, empty meter window, settings window, config persistence.
 2. Hooks produce combat events, printed to a debug window.
 3. Aggregation and fight lifecycle, shown as a live DPS tab against a target dummy.
 4. Tank/Heal tabs, job icons, gauges, name display, pet merge.
@@ -138,3 +140,4 @@ All options live here, never in the meter.
 7. Fight dropdown (play sessions) and history browser (filters, pin, delete).
 8. FFLogs section: IINACT detection, Uploader launch, FFLogs page link.
 9. Visibility rules, lock, click-through, opacity.
+10. Visual polish: custom styling for header buttons, tabs, rows and gauges (the user expects this pass; until then use stock ImGui widgets).
