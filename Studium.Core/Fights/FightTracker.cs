@@ -34,7 +34,7 @@ public sealed class FightTracker
     /// How long the party may be out of combat before the fight ends. The timer holds meanwhile;
     /// re-entering combat resumes the same fight.
     /// </summary>
-    public static readonly TimeSpan OutOfCombatGrace = TimeSpan.FromSeconds(10);
+    public static readonly TimeSpan OutOfCombatGrace = TimeSpan.FromSeconds(1);
 
     private readonly ICombatWorld world;
     private readonly DeathRecorder deaths = new();
@@ -146,6 +146,11 @@ public sealed class FightTracker
             return;
 
         var fight = Current;
+        // Hits and heals since the last tick may have moved the medians.
+        if (fight.DotTicks.Count > 0)
+            Resplit(heal: false);
+        if (fight.HotTicks.Count > 0)
+            Resplit(heal: true);
         fight.IsActive = false;
         fight.HeldAt = null;
         fight.EndTime = endTime < fight.Start ? fight.Start : endTime;
@@ -213,6 +218,8 @@ public sealed class FightTracker
                     attacker.MaxHitActionId = hit.ActionId;
                 }
                 Ability(attacker.DamageAbilities, hit.ActionId).Add(hit.Amount, hit.Crit, hit.DirectHit);
+                if (hit is { Kind: HitKind.Damage, Crit: false, DirectHit: false, Potency: > 0 } && hit.Amount > 0)
+                    attacker.PotencySamples.Add((double)hit.Amount / hit.Potency.Value);
                 AddEnemyDamage(hit.TargetId, hit.Amount);
             }
 
@@ -248,6 +255,8 @@ public sealed class FightTracker
                     healer.HealHits++;
                     if (hit.Crit)
                         healer.HealCrits++;
+                    if (hit is { Crit: false, Potency: > 0 } && hit.Amount > 0)
+                        healer.HealPotencySamples.Add((double)hit.Amount / hit.Potency.Value);
                     Ability(healer.HealAbilities, hit.ActionId).Add(hit.Amount, hit.Crit, overheal: hit.Overheal);
                 }
                 if (targetIsAlly)
@@ -267,6 +276,17 @@ public sealed class FightTracker
 
     private void HandleTick(PeriodicTickEvent tick)
     {
+        if (tick is { IsHeal: false, Dots.Count: > 0 } && !Counts(tick.TargetId, 0))
+        {
+            HandleDotTick(tick, tick.Dots);
+            return;
+        }
+        if (tick is { IsHeal: true, Dots.Count: > 0 })
+        {
+            HandleHotTick(tick, tick.Dots);
+            return;
+        }
+
         // "IsAlly" here means "counted": your party / alliance, plus other players when enabled.
         var sourceIsAlly = Counts(tick.SourceId, tick.SourceOwnerId);
         var targetIsAlly = Counts(tick.TargetId, 0);
@@ -316,6 +336,114 @@ public sealed class FightTracker
             deaths.Damage(tick.TargetId, tick.Time, tick.SourceId, Current!.TickKey(tick.StatusIds ?? [], false), tick.Amount,
                 false, false, false, false, tick.Hp, tick.Defense);
             NoteHitOnAlly(tick.TargetId, tick.Time);
+        }
+    }
+
+    /// <summary>
+    /// A DoT tick on an enemy: the sum of every DoT on it, from every player. Kept raw, then every tick of the
+    /// fight is split again, so earlier ticks use each player's latest damage per potency.
+    /// </summary>
+    private void HandleDotTick(PeriodicTickEvent tick, IReadOnlyList<DotOnTarget> dots)
+    {
+        var allyInvolved = world.IsAlly(tick.SourceId) || dots.Any(d => IsAllyOrAllyPet(d.SourceId, d.SourceOwnerId));
+        var counted = dots.Where(d => Counts(d.SourceId, d.SourceOwnerId)).Select(d => d.SourceId).ToHashSet();
+        if (!allyInvolved && !FightsKnownEnemy(tick.SourceId, 0, tick.TargetId, sourceIsPlayer: true))
+            return;
+        if (!EnsureFight(tick.Time, counted.Count > 0, false, allyInvolved))
+            return;
+
+        var fight = Current!;
+        fight.DotTicks.Add(new DotTick(tick.Time, tick.TargetId, tick.Amount, dots, counted));
+        NoteActions(fight, dots);
+        AddEnemyDamage(tick.TargetId, tick.Amount);
+        Resplit(heal: false);
+    }
+
+    /// <summary>A HoT tick: the sum of every HoT on the player, from every healer (and faerie). Kept and re-split like DoTs.</summary>
+    private void HandleHotTick(PeriodicTickEvent tick, IReadOnlyList<DotOnTarget> dots)
+    {
+        if (Current == null)
+            return;
+        var allyInvolved = world.IsAlly(tick.TargetId) || dots.Any(d => IsAllyOrAllyPet(d.SourceId, d.SourceOwnerId));
+        if (!allyInvolved)
+            return;
+
+        var fight = Current;
+        var counted = dots.Where(d => Counts(d.SourceId, d.SourceOwnerId)).Select(d => d.SourceId).ToHashSet();
+        fight.HotTicks.Add(new DotTick(tick.Time, tick.TargetId, tick.Amount, dots, counted, tick.Overheal));
+        NoteActions(fight, dots);
+        if (Counts(tick.TargetId, 0))
+        {
+            Stats(tick.TargetId).HealingReceived += tick.Amount;
+            deaths.Heal(tick.TargetId, tick.Time, tick.SourceId, fight.TickKey(tick.StatusIds ?? [], true), tick.Amount, tick.Overheal, false,
+                tick.Hp, tick.Defense);
+        }
+        Resplit(heal: true);
+    }
+
+    private static void NoteActions(Fight fight, IReadOnlyList<DotOnTarget> dots)
+    {
+        foreach (var dot in dots)
+        {
+            if (dot.ActionId != 0)
+                fight.DotActions[dot.StatusId] = dot.ActionId;
+        }
+    }
+
+    /// <summary>
+    /// Rebuilds every player's DoT (or HoT) shares from all of the fight's ticks, using the latest damage (healing)
+    /// per potency.
+    /// </summary>
+    private void Resplit(bool heal)
+    {
+        var fight = Current!;
+        var rates = new Dictionary<uint, double>();
+        foreach (var combatant in fight.Combatants.Values)
+        {
+            var samples = heal ? combatant.HealPotencySamples : combatant.PotencySamples;
+            if (samples.Count > 0)
+                rates[combatant.Id] = DotSplit.Median(new List<double>(samples));
+
+            if (heal)
+            {
+                combatant.Healing -= combatant.HotHealing;
+                combatant.Overheal -= combatant.HotOverheal;
+                combatant.HotHealing = 0;
+                combatant.HotOverheal = 0;
+            }
+            else
+            {
+                combatant.Damage -= combatant.DotDamage;
+                combatant.DotDamage = 0;
+            }
+            var abilities = heal ? combatant.HealAbilities : combatant.DamageAbilities;
+            foreach (var key in abilities.Keys.Where(AbilityStats.IsSplitTickKey).ToList())
+                abilities.Remove(key);
+        }
+
+        foreach (var tick in heal ? fight.HotTicks : fight.DotTicks)
+        {
+            foreach (var share in DotSplit.Split(tick, rates))
+            {
+                if (!tick.Counted.Contains(share.SourceId))
+                    continue;
+                var owner = Stats(share.SourceId, share.SourceOwnerId);
+                var key = AbilityStats.SplitTickKey(share.StatusId);
+                if (heal)
+                {
+                    owner.Healing += share.Amount;
+                    owner.Overheal += share.Overheal;
+                    owner.HotHealing += share.Amount;
+                    owner.HotOverheal += share.Overheal;
+                    Ability(owner.HealAbilities, key).Add(share.Amount, overheal: share.Overheal);
+                }
+                else
+                {
+                    owner.Damage += share.Amount;
+                    owner.DotDamage += share.Amount;
+                    Ability(owner.DamageAbilities, key).Add(share.Amount);
+                }
+            }
         }
     }
 

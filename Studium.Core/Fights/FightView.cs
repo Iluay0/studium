@@ -29,7 +29,8 @@ public sealed record CombatantRow(
 
 /// <summary>
 /// One ability in a drill-down. <see cref="PetName"/> is set when the ability belongs to a merged pet.
-/// Tick rows (<see cref="IsTick"/>) have no crit/DH data.
+/// Tick rows (<see cref="IsTick"/>) have no crit/DH data. <see cref="IsEstimated"/> marks a DoT's estimated share
+/// of combined ticks; <see cref="LinkedActionId"/> is the action that applies it (0 when unknown).
 /// </summary>
 public sealed record AbilityRow(
     uint ActionId,
@@ -43,7 +44,9 @@ public sealed record AbilityRow(
     long Max,
     double OverhealRate,
     bool IsTick,
-    IReadOnlyList<uint> StatusIds);
+    IReadOnlyList<uint> StatusIds,
+    bool IsEstimated = false,
+    uint LinkedActionId = 0);
 
 public sealed record FightSummary(IReadOnlyList<CombatantRow> Rows, double RaidDps, double RaidHps);
 
@@ -136,7 +139,9 @@ public static class FightView
                 e.Stats.Max,
                 Share(e.Stats.Overheal, e.Stats.Total),
                 AbilityStats.IsTick(e.Key),
-                TickStatuses(fight, e.Key)))
+                TickStatuses(fight, e.Key),
+                AbilityStats.IsSplitTickKey(e.Key),
+                AbilityStats.IsSplitTickKey(e.Key) ? fight.DotActions.GetValueOrDefault(AbilityStats.StatusIdOf(e.Key)) : 0))
             .OrderByDescending(r => r.Total)
             .ToList();
     }

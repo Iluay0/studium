@@ -162,13 +162,13 @@ public class FightTrackerTests
         tracker.Update(T0.AddSeconds(1), partyInCombat: true);
         tracker.Update(T0.AddSeconds(60), partyInCombat: true); // idle but still in combat (striking dummy)
         tracker.Update(T0.AddSeconds(61), partyInCombat: false); // combat drops here
-        tracker.Update(T0.AddSeconds(70), partyInCombat: false); // within grace: timer held
+        tracker.Update(T0.AddSeconds(61.5), partyInCombat: false); // within grace: timer held
         Assert.NotNull(tracker.Current);
-        Assert.Equal(TimeSpan.FromSeconds(61), tracker.Current!.Duration(T0.AddSeconds(70)));
+        Assert.Equal(TimeSpan.FromSeconds(61), tracker.Current!.Duration(T0.AddSeconds(61.5)));
 
         Fight? ended = null;
         tracker.FightEnded += f => ended = f;
-        tracker.Update(T0.AddSeconds(71), partyInCombat: false);
+        tracker.Update(T0.AddSeconds(62), partyInCombat: false);
         Assert.Null(tracker.Current);
         Assert.NotNull(ended);
         Assert.Same(ended, tracker.Displayed);
@@ -195,8 +195,8 @@ public class FightTrackerTests
         tracker.Handle(Hit(0, Me, Boss, 100));
         tracker.Update(T0.AddSeconds(1), partyInCombat: true);
         tracker.Update(T0.AddSeconds(5), partyInCombat: false);
-        Assert.Equal(TimeSpan.FromSeconds(5), tracker.Current!.Duration(T0.AddSeconds(8))); // held
-        tracker.Update(T0.AddSeconds(8), partyInCombat: true);
+        Assert.Equal(TimeSpan.FromSeconds(5), tracker.Current!.Duration(T0.AddSeconds(5.5))); // held
+        tracker.Update(T0.AddSeconds(5.5), partyInCombat: true);
         Assert.Equal(TimeSpan.FromSeconds(9), tracker.Current!.Duration(T0.AddSeconds(9))); // resumed, gap counts
         tracker.Update(T0.AddSeconds(30), partyInCombat: false);
         tracker.Update(T0.AddSeconds(40), partyInCombat: false);

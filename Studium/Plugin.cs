@@ -38,6 +38,7 @@ public sealed class Plugin : IDalamudPlugin
     public HistoryWindow HistoryWindow { get; }
     public GameCombatEventSource CombatEvents { get; }
     public GameNames Names { get; }
+    public PotencyTable Potencies { get; }
     public FightService Fights { get; }
     public FightHistory History { get; }
 
@@ -48,7 +49,8 @@ public sealed class Plugin : IDalamudPlugin
             Configuration.Save();
 
         Names = new GameNames(DataManager);
-        CombatEvents = new GameCombatEventSource(GameInterop, ObjectTable, Log, Names);
+        Potencies = new PotencyTable(DataManager, ClientState, Log);
+        CombatEvents = new GameCombatEventSource(GameInterop, ObjectTable, Log, Names, Potencies);
 
         // Hooks are live from here on; if anything below fails, release them so the game isn't left hooked.
         try
@@ -59,7 +61,7 @@ public sealed class Plugin : IDalamudPlugin
 
             MeterWindow = new MeterWindow(this) { IsOpen = Configuration.MeterOpen };
             SettingsWindow = new SettingsWindow(this);
-            DebugWindow = new DebugWindow(CombatEvents, ObjectTable, PartyList, Names);
+            DebugWindow = new DebugWindow(CombatEvents, ObjectTable, PartyList, Names, Potencies, DataManager);
             DrillDownWindow = new DrillDownWindow(this);
             HistoryWindow = new HistoryWindow(this);
             windowSystem.AddWindow(MeterWindow);
@@ -88,6 +90,7 @@ public sealed class Plugin : IDalamudPlugin
             (History as IDisposable)?.Dispose();
             (Fights as IDisposable)?.Dispose();
             CombatEvents.Dispose();
+            Potencies.Dispose();
             throw;
         }
     }
@@ -107,6 +110,7 @@ public sealed class Plugin : IDalamudPlugin
         History.Dispose();
         Fights.Dispose();
         CombatEvents.Dispose();
+        Potencies.Dispose();
     }
 
     public void ToggleMeter()

@@ -7,7 +7,6 @@ public sealed record PlaySession(DateTime Start, DateTime End, IReadOnlyList<Fig
 
 public static class PlaySessions
 {
-    public const int DropdownMinimum = 15;
     public const int DropdownMaximum = 30;
 
     public static DateTime EndOf(FightIndexEntry entry) => entry.Start.AddSeconds(entry.DurationSeconds);
@@ -37,16 +36,15 @@ public static class PlaySessions
     }
 
     /// <summary>
-    /// The meter's fight dropdown: the current play session's fights; if that's fewer than
-    /// <see cref="DropdownMinimum"/>, topped up with earlier fights. Capped at <see cref="DropdownMaximum"/>. Newest first.
+    /// The meter's fight dropdown: the current play session's fights only, newest first, capped at
+    /// <see cref="DropdownMaximum"/>. Empty when there's no current session; earlier fights are in the history.
     /// </summary>
     public static IReadOnlyList<FightIndexEntry> DropdownFights(IEnumerable<FightIndexEntry> entries, DateTime now, TimeSpan gap)
     {
-        var newestFirst = entries.OrderByDescending(e => e.Start).ToList();
-        var sessions = Group(newestFirst, gap);
-        var currentSessionCount = sessions.Count > 0 && now - sessions[0].End < gap ? sessions[0].Fights.Count : 0;
-        var count = Math.Min(Math.Max(currentSessionCount, DropdownMinimum), DropdownMaximum);
-        return newestFirst.Take(count).ToList();
+        var sessions = Group(entries, gap);
+        if (sessions.Count == 0 || now - sessions[0].End >= gap)
+            return [];
+        return sessions[0].Fights.Take(DropdownMaximum).ToList();
     }
 
     private static PlaySession Make(List<FightIndexEntry> fights) =>

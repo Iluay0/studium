@@ -30,6 +30,8 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
     private delegate void ActorCastDelegate(uint entityId, ActorCastPacket* packet);
 
     private const int EffectsPerTarget = 8;
+    /// <summary>ActionEffect header ActionType for regular actions (not items, mounts...).</summary>
+    private const byte ActionTypeAction = 1;
 
     private readonly IObjectTable objectTable;
     private readonly IPluginLog log;
@@ -50,12 +52,14 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
     public Func<uint, bool> TracksHp { get; set; } = _ => false;
 
     private readonly GameNames names;
+    private readonly PotencyTable potencies;
 
-    public GameCombatEventSource(IGameInteropProvider interop, IObjectTable objectTable, IPluginLog log, GameNames names)
+    public GameCombatEventSource(IGameInteropProvider interop, IObjectTable objectTable, IPluginLog log, GameNames names, PotencyTable potencies)
     {
         this.objectTable = objectTable;
         this.log = log;
         this.names = names;
+        this.potencies = potencies;
         Actors = new ActorCache(objectTable);
 
         actionEffectHook = TryHook<ReceiveActionEffectDelegate>(interop, "ActionEffect",
@@ -113,6 +117,11 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
         var now = DateTime.UtcNow;
         var ownerId = casterPtr != null ? NormalizeId(casterPtr->OwnerId) : Actors.OwnerOf(casterId);
         Actors.Observe(casterId);
+        // Players' fixed potencies measure their damage (healing) per potency, which weighs their DoTs (HoTs) in combined ticks.
+        var isPlayerAction = casterPtr != null && casterPtr->GameObject.ObjectKind == ObjectKind.Pc && header->ActionType == ActionTypeAction;
+        int? Potency(bool heal) => isPlayerAction
+            ? potencies.FixedPotency(header->ActionId, casterPtr->CharacterData.ClassJob, casterPtr->CharacterData.Level, heal)
+            : null;
 
         var entries = (ActionEffectHandler.Effect*)effects;
         for (var t = 0; t < header->NumTargets; t++)
@@ -137,7 +146,8 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
                 EventReceived?.Invoke(new ActionHitEvent(
                     now, casterId, ownerId, effectTarget, header->ActionId, header->ActionType,
                     decoded.Kind, decoded.Amount, decoded.Crit, decoded.DirectHit, overheal,
-                    tracked ? hp : null, tracked ? ReadDefense(effectTarget, casterId) : null));
+                    tracked ? hp : null, tracked ? ReadDefense(effectTarget, casterId) : null,
+                    decoded.Kind switch { HitKind.Damage => Potency(false), HitKind.Heal => Potency(true), _ => null }));
             }
         }
     }
@@ -161,10 +171,12 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
                         Actors.Observe(entityId);
                         var hp = isHeal || TracksHp(entityId) ? ReadHp(entityId) : null;
                         var overheal = isHeal && hp is { } h ? Overheal.Estimate(amount, h.Current, h.Max) : 0;
-                        var statuses = TickCandidates(entityId, sourceId, isHeal, arg1);
+                        var statuses = TickCandidates(entityId, sourceId, isHeal, arg1, anySource: !isHeal && TracksHp(entityId));
                         var tracked = TracksHp(entityId);
+                        // DoTs on party members come from enemies, whose potencies aren't known: those stay unsplit.
+                        var dots = !isHeal && tracked ? null : OverTimeOn(entityId, sourceId, arg1, isHeal);
                         EventReceived?.Invoke(new PeriodicTickEvent(now, sourceId, Actors.OwnerOf(sourceId), entityId, isHeal, amount, overheal,
-                            statuses, tracked ? hp : null, tracked ? ReadDefense(entityId, sourceId) : null));
+                            statuses, tracked ? hp : null, tracked ? ReadDefense(entityId, sourceId) : null, dots));
                     }
                     break;
                 case EffectDecoder.ActorControlDeath:
@@ -200,7 +212,11 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
     /// Which of the source's DoTs (or HoTs) could this tick be? Ground effects name their status in arg1;
     /// otherwise it's the source's matching statuses on the target right now.
     /// </summary>
-    private IReadOnlyList<uint> TickCandidates(uint targetId, uint sourceId, bool isHeal, uint statusArg)
+    /// <param name="anySource">
+    /// Every DoT on the target, whoever applied it: for DoTs on party members, where the enemies' ticks are summed
+    /// too and can't be split, so the row names them all.
+    /// </param>
+    private IReadOnlyList<uint> TickCandidates(uint targetId, uint sourceId, bool isHeal, uint statusArg, bool anySource)
     {
         if (statusArg != 0)
             return [statusArg];
@@ -210,7 +226,7 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
         var candidates = new List<uint>(2);
         foreach (var status in target.StatusList)
         {
-            if (status.StatusId == 0 || status.SourceId != sourceId)
+            if (status.StatusId == 0 || (!anySource && status.SourceId != sourceId))
                 continue;
             var info = names.Status(status.StatusId);
             if (isHeal ? info.IsHot : info.IsDot)
@@ -218,6 +234,37 @@ public sealed unsafe class GameCombatEventSource : ICombatEventSource, IDisposab
         }
         return candidates;
     }
+
+    /// <summary>
+    /// Every DoT on an enemy (or HoT on a player) when a tick lands, from every player: the game sums them into one
+    /// tick. A ground effect names its status in arg1 and ticks alone, so it's the only one. Null when none can be read.
+    /// </summary>
+    private IReadOnlyList<DotOnTarget>? OverTimeOn(uint targetId, uint sourceId, uint statusArg, bool heal)
+    {
+        if (statusArg != 0)
+            return [new DotOnTarget(statusArg, sourceId, 0, 0, Actors.OwnerOf(sourceId))];
+        if (objectTable.SearchByEntityId(targetId) is not IBattleChara target)
+            return null;
+
+        var found = new List<DotOnTarget>(4);
+        foreach (var status in target.StatusList)
+        {
+            if (status.StatusId == 0)
+                continue;
+            var info = names.Status(status.StatusId);
+            if (!(heal ? info.IsHot : info.IsDot))
+                continue;
+            // A faerie's HoT (Whispering Dawn) is weighed with its owner's job, level and healing per potency.
+            var ownerId = Actors.OwnerOf(status.SourceId);
+            var (job, level) = JobAndLevel(ownerId != 0 ? ownerId : status.SourceId);
+            var (actionId, potency) = job == 0 ? (0u, 0) : potencies.OverTime(status.StatusId, job, level, heal);
+            found.Add(new DotOnTarget(status.StatusId, status.SourceId, actionId, potency, ownerId));
+        }
+        return found.Count > 0 ? found : null;
+    }
+
+    private (uint Job, int Level) JobAndLevel(uint entityId) =>
+        objectTable.SearchByEntityId(entityId) is IBattleChara chara ? (chara.ClassJob.RowId, chara.Level) : (Actors.Get(entityId)?.ClassJobId ?? 0, 100);
 
     /// <summary>Statuses with more time left than this are background (e.g. long buffs), not part of a death.</summary>
     private const float LongStatusSeconds = 300;

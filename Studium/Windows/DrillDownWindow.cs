@@ -26,7 +26,10 @@ public sealed class DrillDownWindow : Theme.ThemedWindow
         SizeCondition = ImGuiCond.FirstUseEver;
     }
 
-    /// <summary>Opens the breakdown for a meter row; <paramref name="deaths"/> opens it on the Deaths tab.</summary>
+    /// <summary>
+    /// Opens the breakdown for a meter row on the tab it was clicked from (DPS, Tank or Heal);
+    /// <paramref name="deaths"/> opens it on Deaths.
+    /// </summary>
     public void Show(Fight fight, uint rowId, MeterTab tab, bool deaths = false)
     {
         this.fight = fight;
@@ -41,7 +44,7 @@ public sealed class DrillDownWindow : Theme.ThemedWindow
     {
         base.PreDraw();
         var row = CurrentRow();
-        var what = tab switch
+        var what = showDeaths ? "Deaths" : tab switch
         {
             MeterTab.Heal => "Healing",
             MeterTab.Tank => "Damage Taken",
@@ -60,17 +63,22 @@ public sealed class DrillDownWindow : Theme.ThemedWindow
             return;
         }
 
-        DrawSummary(row);
-
+        // One tab per meter tab plus Deaths, so one player's damage, tanking and healing are a click apart.
         var deathCount = fight.Deaths.Count(d => d.VictimId == rowId);
-        var selected = Widgets.FlatTabs("##breakdownTabs", ["Abilities", deathCount > 0 ? $"Deaths ({deathCount})" : "Deaths"], showDeaths ? 1 : 0);
-        showDeaths = selected == 1;
+        var current = showDeaths ? 3 : tab switch { MeterTab.Tank => 1, MeterTab.Heal => 2, _ => 0 };
+        var selected = Widgets.FlatTabs("##breakdownTabs", ["DPS", "Tank", "Heal", deathCount > 0 ? $"Deaths ({deathCount})" : "Deaths"], current);
+        showDeaths = selected == 3;
+        if (!showDeaths)
+            tab = selected switch { 1 => MeterTab.Tank, 2 => MeterTab.Heal, _ => MeterTab.Dps };
         ImGui.Spacing();
 
         if (showDeaths)
+        {
             DrawDeaths();
-        else
-            DrawAbilities(row);
+            return;
+        }
+        DrawSummary(row);
+        DrawAbilities(row);
     }
 
     private void DrawAbilities(CombatantRow row)
@@ -93,16 +101,46 @@ public sealed class DrillDownWindow : Theme.ThemedWindow
 
         // Tab colour for the gauges: the player's job colour (grey for NPCs / unknown).
         var colour = Theme.Rgb(Jobs.Rgb(row.JobId));
-        var top = abilities.Count > 0 ? Math.Max(abilities.Max(a => a.Total), 1) : 1;
+        var groups = GroupDots(abilities);
+        var top = groups.Count > 0 ? Math.Max(groups.Max(g => g.Total), 1) : 1;
         var lineHeight = ImGui.GetTextLineHeight();
         // Icons at 1.5× the text height: bigger icons without a bigger font; rows grow taller, not wider.
         var iconSize = MathF.Round(lineHeight * IconScale);
 
-        // Ticks sit in the same list, sorted by total like everything else.
-        foreach (var ability in abilities)
-            DrawAbility(ability, isHeal, colour, top, tableLeft, tableWidth, iconSize, body);
+        // A skill and its DoT share one gauge, under the DoT row; everything is sorted by its (combined) total.
+        foreach (var (main, dot, total) in groups)
+        {
+            var fraction = (float)total / top;
+            DrawAbility(main, isHeal, colour, dot == null ? fraction : null, false, tableLeft, tableWidth, iconSize, body);
+            if (dot != null)
+                DrawAbility(dot, isHeal, colour, fraction, true, tableLeft, tableWidth, iconSize, body);
+        }
 
         ImGui.EndTable();
+    }
+
+    /// <summary>
+    /// Pairs each DoT (HoT) with the skill that applies it (Stormbite with Stormbite's DoT), when both are in the list.
+    /// One whose skill isn't there (applied before the fight) stays on its own as "Stormbite (DoT)".
+    /// </summary>
+    private static List<(AbilityRow Main, AbilityRow? Dot, long Total)> GroupDots(IReadOnlyList<AbilityRow> abilities)
+    {
+        var skills = abilities.Where(a => !a.IsTick && a.PetName == null).ToDictionary(a => a.ActionId);
+        var dotOf = new Dictionary<uint, AbilityRow>();
+        foreach (var dot in abilities.Where(a => a is { IsEstimated: true, LinkedActionId: not 0, PetName: null }))
+        {
+            if (skills.ContainsKey(dot.LinkedActionId))
+                dotOf.TryAdd(dot.LinkedActionId, dot);
+        }
+
+        var paired = dotOf.Values.ToHashSet();
+        return abilities
+            .Where(a => !paired.Contains(a))
+            .Select(a => a.IsTick || a.PetName != null || !dotOf.TryGetValue(a.ActionId, out var dot)
+                ? (a, (AbilityRow?)null, a.Total)
+                : (a, dot, a.Total + dot.Total))
+            .OrderByDescending(g => g.Item3)
+            .ToList();
     }
 
     /// <summary>Each death of this player: when, what killed them, and the last 30 s leading up to it.</summary>
@@ -356,9 +394,9 @@ public sealed class DrillDownWindow : Theme.ThemedWindow
         (string Label, string Value)[] stats = tab switch
         {
             MeterTab.Heal => [("HPS", row.Hps.ToString("N0")), ("Total", Format.Compact(row.Healing)), ("Heal", Format.Compact(row.Healing - row.Shielding)),
-                ("Shield", Format.Compact(row.Shielding)), ("Overheal", Format.Percent(row.OverhealRate)), ("Crit", Format.Percent(row.HealCritRate)), ("Deaths", row.Deaths.ToString())],
-            MeterTab.Tank => [("Taken", Format.Compact(row.DamageTaken)), ("Parry", Format.Percent(row.ParryRate)), ("Block", Format.Percent(row.BlockRate)), ("Healed-on", Format.Compact(row.HealingReceived)), ("Deaths", row.Deaths.ToString())],
-            _ => [("DPS", row.Dps.ToString("N0")), ("Total", Format.Compact(row.Damage)), ("Crit", Format.Percent(row.CritRate)), ("Direct hit", Format.Percent(row.DirectHitRate)), ("Deaths", row.Deaths.ToString())],
+                ("Shield", Format.Compact(row.Shielding)), ("Overheal", Format.Percent(row.OverhealRate)), ("Crit", Format.Percent(row.HealCritRate))],
+            MeterTab.Tank => [("Taken", Format.Compact(row.DamageTaken)), ("Parry", Format.Percent(row.ParryRate)), ("Block", Format.Percent(row.BlockRate)), ("Healed-on", Format.Compact(row.HealingReceived))],
+            _ => [("DPS", row.Dps.ToString("N0")), ("Total", Format.Compact(row.Damage)), ("Crit", Format.Percent(row.CritRate)), ("Direct hit", Format.Percent(row.DirectHitRate))],
         };
 
         var top = ImGui.GetCursorPosY();
@@ -380,29 +418,42 @@ public sealed class DrillDownWindow : Theme.ThemedWindow
         ImGui.SetCursorPosY(ImGui.GetCursorPosY() + 8);
     }
 
-    private void DrawAbility(AbilityRow ability, bool isHeal, Vector4 colour, long top, float tableLeft, float tableWidth, float iconSize, (Vector2 Min, Vector2 Max) body)
+    /// <param name="gauge">Fraction of the top ability to draw along the bottom of the row; null draws none.</param>
+    /// <param name="child">A DoT (HoT) row under its skill: indented, smaller icon, named just "DoT" ("HoT").</param>
+    private void DrawAbility(AbilityRow ability, bool isHeal, Vector4 colour, float? gauge, bool child, float tableLeft, float tableWidth, float iconSize, (Vector2 Min, Vector2 Max) body)
     {
-        var rowHeight = iconSize + (ImGui.GetStyle().CellPadding.Y * 2);
+        var rowIconSize = child ? MathF.Round(iconSize * 0.7f) : iconSize;
+        var rowHeight = rowIconSize + (ImGui.GetStyle().CellPadding.Y * 2);
         ImGui.TableNextRow(ImGuiTableRowFlags.None, rowHeight);
         ImGui.TableNextColumn();
 
         // Thin gauge along the bottom of the row, sized against the top ability.
-        var rowBottom = ImGui.GetCursorScreenPos().Y - ImGui.GetStyle().CellPadding.Y + rowHeight;
-        var fraction = (float)ability.Total / top;
-        Widgets.PushClip(new Vector2(tableLeft, rowBottom - 2), new Vector2(tableLeft + tableWidth, rowBottom), body);
-        ImGui.GetWindowDrawList().AddRectFilled(
-            new Vector2(tableLeft, rowBottom - 1.5f), new Vector2(tableLeft + (tableWidth * fraction), rowBottom),
-            Theme.U32(colour with { W = 0.8f }));
-        ImGui.PopClipRect();
+        if (gauge is { } fraction)
+        {
+            var rowBottom = ImGui.GetCursorScreenPos().Y - ImGui.GetStyle().CellPadding.Y + rowHeight;
+            Widgets.PushClip(new Vector2(tableLeft, rowBottom - 2), new Vector2(tableLeft + tableWidth, rowBottom), body);
+            ImGui.GetWindowDrawList().AddRectFilled(
+                new Vector2(tableLeft, rowBottom - 1.5f), new Vector2(tableLeft + (tableWidth * fraction), rowBottom),
+                Theme.U32(colour with { W = 0.8f }));
+            ImGui.PopClipRect();
+        }
 
-        DrawKeyIcon(ability.ActionId, iconSize);
+        if (child)
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + iconSize - rowIconSize); // icon ends where the skill's does
+        DrawKeyIcon(ability.ActionId, rowIconSize);
         ImGui.SameLine(0, 7);
-        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + ((iconSize - ImGui.GetTextLineHeight()) / 2));
-        var name = KeyName(ability.ActionId, isHeal);
-        ImGui.TextColored(Theme.Text, ability.PetName != null ? $"{name} ({ability.PetName})" : name);
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + ((rowIconSize - ImGui.GetTextLineHeight()) / 2));
+        var name = child ? isHeal ? "HoT" : "DoT" : KeyName(ability.ActionId, isHeal);
+        ImGui.TextColored(child ? Theme.Muted : Theme.Text, ability.PetName != null ? $"{name} ({ability.PetName})" : name);
         KeyTooltip(ability.ActionId);
+        if (ability.IsEstimated && ImGui.IsItemHovered())
+            ImGui.SetTooltip(isHeal
+                ? "Estimated. The game sends one tick for every HoT on the player, from every healer;\n" +
+                  "Studium splits it by each HoT's potency × its owner's healing per potency."
+                : "Estimated. The game sends one tick for every DoT on the target, from every player;\n" +
+                  "Studium splits it by each DoT's potency × its owner's damage per potency.");
 
-        Number(Format.Compact(ability.Total), Theme.Bright);
+        Number(ability.IsEstimated ? $"~{Format.Compact(ability.Total)}" : Format.Compact(ability.Total), Theme.Bright);
         Number(Format.Percent(ability.Share), Theme.Muted);
         Number(ability.Hits.ToString("N0"), Theme.Muted);
         // Ticks carry no crit / DH data, and absorbed shields can't crit or overheal.
@@ -415,7 +466,7 @@ public sealed class DrillDownWindow : Theme.ThemedWindow
         void Number(string text, Vector4 textColour)
         {
             ImGui.TableNextColumn();
-            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + ((iconSize - ImGui.GetTextLineHeight()) / 2));
+            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + ((rowIconSize - ImGui.GetTextLineHeight()) / 2));
             Widgets.RightText(text, textColour);
         }
     }

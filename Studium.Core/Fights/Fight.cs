@@ -19,7 +19,17 @@ public sealed class CombatantStats
 
     // Dealt
     public long Damage { get; set; }
+    /// <summary>This player's estimated share of combined DoT ticks, included in <see cref="Damage"/>.</summary>
     public long DotDamage { get; set; }
+    /// <summary>
+    /// Damage per potency point of each fixed-potency, non-crit, non-DH hit: weighs this player's DoTs when
+    /// splitting combined ticks. Only needed while the fight runs.
+    /// </summary>
+    [JsonIgnore]
+    public List<double> PotencySamples { get; } = new();
+    /// <summary>Healing per potency point of each fixed-potency, non-crit heal: weighs this player's HoTs the same way.</summary>
+    [JsonIgnore]
+    public List<double> HealPotencySamples { get; } = new();
     /// <summary>Direct hits that landed (DoT ticks excluded: the game doesn't flag their crits).</summary>
     public int Hits { get; set; }
     public int Crits { get; set; }
@@ -35,6 +45,9 @@ public sealed class CombatantStats
     public long Shielding { get; set; }
     public long Overheal { get; set; }
     public int HealHits { get; set; }
+    /// <summary>This player's estimated share of combined HoT ticks (and its overheal), included in <see cref="Healing"/> / <see cref="Overheal"/>.</summary>
+    public long HotHealing { get; set; }
+    public long HotOverheal { get; set; }
     public int HealCrits { get; set; }
 
     // Taken
@@ -67,11 +80,21 @@ public sealed class AbilityStats
     /// </summary>
     public const uint ComboKeyFlag = 0x4000_0000;
 
+    /// <summary>
+    /// A DoT's (or HoT's) estimated share of combined ticks (see <see cref="DotSplit"/>) is keyed by status ID with
+    /// this bit and <see cref="StatusKeyFlag"/> set: a status key that the tracker rebuilds whenever it re-splits.
+    /// </summary>
+    public const uint SplitTickFlag = 0x1000_0000;
+
     public static uint StatusKey(uint statusId) => statusId | StatusKeyFlag;
+
+    public static uint SplitTickKey(uint statusId) => statusId | StatusKeyFlag | SplitTickFlag;
 
     public static bool IsStatusKey(uint key) => (key & StatusKeyFlag) != 0 && key is not (DotKey or HotKey);
 
-    public static uint StatusIdOf(uint key) => key & ~StatusKeyFlag;
+    public static bool IsSplitTickKey(uint key) => IsStatusKey(key) && (key & SplitTickFlag) != 0;
+
+    public static uint StatusIdOf(uint key) => key & ~(StatusKeyFlag | SplitTickFlag);
 
     public static bool IsComboKey(uint key) => (key & (StatusKeyFlag | ComboKeyFlag)) == ComboKeyFlag;
 
@@ -144,6 +167,17 @@ public sealed class Fight
 
     /// <summary>Party members' deaths in this fight, oldest first, each with the events leading up to it.</summary>
     public List<DeathRecord> Deaths { get; init; } = new();
+
+    /// <summary>DoT ticks on enemies as the game sent them, re-split as the fight goes on. Only needed while it runs.</summary>
+    [JsonIgnore]
+    public List<DotTick> DotTicks { get; } = new();
+
+    /// <summary>HoT ticks on players, kept the same way.</summary>
+    [JsonIgnore]
+    public List<DotTick> HotTicks { get; } = new();
+
+    /// <summary>DoT / HoT status → the action that applies it (e.g. Stormbite's DoT → Stormbite), to show them together.</summary>
+    public Dictionary<uint, uint> DotActions { get; init; } = new();
 
     /// <summary>Combo tick keys → the statuses that were up together (sorted status IDs).</summary>
     public Dictionary<uint, uint[]> StatusCombos { get; init; } = new();

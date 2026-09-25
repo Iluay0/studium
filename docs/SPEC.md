@@ -16,7 +16,7 @@ Scope agreed on 2026-09-24 through a grilling session. Anything not listed under
 - Uploading to FFLogs from in-game. There is no public upload API.
 - Writing our own ACT-format network logs. IINACT keeps doing that.
 - FFLogs-style rDPS/aDPS (buff redistribution).
-- The official Dalamud repo, which bans damage parsers. Distribution: dev plugin now, custom repo later.
+- The official Dalamud repo, which bans damage parsers. Distribution: the custom repo (see Post-MVP 5).
 - Talking to IINACT over IPC or websocket.
 
 ## Architecture decisions
@@ -45,7 +45,7 @@ Reference implementations (read only, never copy verbatim):
 
 ### Fight lifecycle
 - **Start:** the first damage event involving a party member (or you, when solo).
-- **End:** the whole party is out of combat **and** the fight's main enemy is no longer engaged (dead, reset, or not targeting anyone), or on a duty wipe / completion. So with your party dead in a hunt or FATE, the fight continues while others fight the mob, and a raise resumes the same fight. Dead time counts. Then a 10 s hold (timer paused; re-entering resumes). Fallback: 30 s with no damage when the combat flag never came up.
+- **End:** the whole party is out of combat **and** the fight's main enemy is no longer engaged (dead, reset, or not targeting anyone), or on a duty wipe / completion. So with your party dead in a hunt or FATE, the fight continues while others fight the mob, and a raise resumes the same fight. Dead time counts. Then a 1 s hold (timer paused; re-entering resumes). Fallback: 30 s with no damage when the combat flag never came up.
 - **Who counts:** you, your party and (in alliance content) your alliance are allies: they start fights, keep them going, and count for wipes. With "Show all players" (Settings → Meter, on by default), every other player is also recorded, but only against enemies your party / alliance is already fighting; they keep a running fight going but never start one and don't count for wipes. In the meter, your party is full brightness; alliance members and other players are muted. The table scrolls when rows overflow.
 - **Enemies** are recorded when your party damages them or they damage your party; the fight is named after the one that took the most damage.
 - **Outcome:** duties report wipe / clear (and always win). Outside that, a fight is a Clear when its main enemy (the one it's named after) died (death packet, or the game's dead flag at fight end), and a Wipe when at some death every party member in the fight (or you, solo) was dead at once (checked at each death, so respawning or a raise before the fight ends doesn't undo it). Otherwise unknown ("—"), e.g. striking dummies or running away.
@@ -55,8 +55,9 @@ Reference implementations (read only, never copy verbatim):
 - **Header:** large timer on the left with the Clear / Wipe chip under it (smaller font); beside it, fight name (the fight dropdown), and the zone on a second line, both cut to fit; history 🕘 and settings ⚙ buttons on the right. Collapse is the native title-bar arrow.
 - **Fight dropdown:**
   - Lists the fights of the current **play session**. A new session starts after an idle gap of 4 h or more (configurable), so a session can cross midnight.
-  - If the session has fewer than N fights (default 15), it fills up with the most recent earlier fights.
+  - Only the current session (changed 2026-09-26): with no fight this session it's empty ("No fights yet this session."). Earlier sessions are only in the history browser.
   - Capped at 30 entries.
+  - Each line: "04:31 [Clear] Magitek Gobwidow G-IX" (duration right-aligned, outcome chip in its colour, name; no start time). The live fight shows a "Live" chip; an unknown outcome shows "—" centred in the chip's slot. Duration and chip slots have fixed widths so chips and names line up.
   - Shows the current character only.
   - Hides fights shorter than the hide threshold.
   - Has **no** "browse history" entry; that's the header button.
@@ -75,14 +76,13 @@ Reference implementations (read only, never copy verbatim):
 - **Click a row** to open the drill-down window.
 
 ### Drill-down window
-- **Header:** the player's job, name, fight and duration, plus a summary: DPS, total, crit%, DH%, deaths.
-- **Per-ability table:** Ability, Total, %, Hits, Crit%, DH%, Avg, Max.
+- **Title:** the player's name, what's shown (Damage / Damage Taken / Healing / Deaths), fight and duration.
+- **Tabs** (2026-09-26): DPS | Tank | Heal | Deaths ("Deaths (2)" with a count). Clicking a meter row opens the tab matching the meter tab it was clicked from; clicking its Deaths number opens Deaths. Switching tabs keeps the same player, so their damage and healing are a click apart.
+- **Summary** under the tab, for that tab: DPS → DPS, total, crit%, DH%; Tank → taken, parry%, block%, healed-on; Heal → HPS, total, heal, shield, overheal%, crit%. Deaths has none.
+- **Per-ability table:** Ability, Total, %, Hits, Crit%, DH% (Overheal% on Heal), Avg, Max.
 - DoTs, auto-attacks and pets appear as their own ability rows.
-- DoT / HoT ticks: the game sends one combined tick per source and target, with no status ID. Studium reads the source's DoTs (or HoTs) on the target at that moment (DoT = harmful status with PartyListPriority 10, HoT = helpful with 5). Tick rows sit in the main ability list, sorted by total:
-  - one status → "Dia (DoT)" with the status icon (exact);
-  - several → one row per combination, "DoT ticks (Caustic Bite + Stormbite)", exact total, never split (the user rejected estimated splits);
-  - none identified → "DoT ticks".
-- The breakdown follows the tab it was opened from: damage dealt (DPS), healing with overheal (Heal), or damage taken by enemy ability (Tank).
+- DoT / HoT ticks: see **DoT split** under Post-MVP. When the game gives no status list (nothing readable on the target), ticks still use the old rule (one row per combination of the named source's statuses). Superseded: the old rule showed one player's combined ticks as "DoT ticks (A + B)", but a tick sums every player's DoTs, so this credited everyone's DoTs to one player.
+- The table follows the selected tab: damage dealt (DPS), healing with overheal (Heal), or damage taken by enemy ability (Tank).
 
 ### History browser
 - Fights grouped by play session, newest first. Sessions can be collapsed.
@@ -101,7 +101,7 @@ Reference implementations (read only, never copy verbatim):
 All options live here, never in the meter.
 - **Meter:**
   - Visibility: always / in combat / in duty. Separate toggle: hide in cutscenes.
-  - Lock position/size, click-through when locked.
+  - Lock position/size, click-through when locked. While click-through, the meter's title says "Studium (Click-through - Ctrl to interact)", shortened to "Studium (Ctrl to interact)" then "Studium" when the window is too narrow.
   - Background opacity, 0–100%. The meter's title bar follows it, and meter text has a dark shadow so it stays readable at any opacity.
   - Name display: full (Iluay Dory) / short surname (Iluay D.) / initials (I. D.), plus a separate "show YOU for me" toggle.
   - Merge pets into owner.
@@ -123,17 +123,27 @@ All options live here, never in the meter.
 ## Post-MVP (in order)
 
 1. **Shield credit** (built, replaces the IINACT-style estimate): shields have no event, so Studium watches each party member's shield gauge. Gains go into a per-player ledger (status, caster, amount). Drops are matched to hits: a drop within 2 s of a hit on that player (either order: the gauge can move before the hit's packet arrives) is damage absorbed, taken from the ledger oldest shield first (assumption when shields overlap) and credited to the caster as healing, with a "Galvanize (shield)" ability row; a drop with no hit within 2 s is an expiry and is just removed. Accurate to ~1% of max HP per change (the gauge is whole percents).
-2. **Death recap** (built): breakdown window gets Abilities | Deaths tabs; clicking the meter's Deaths number opens Deaths. Each death shows "mm:ss · killed by <ability> (<source>)" and the last 30 s newest first: time before death, ability (icon), source, amount (red damage / green heal / miss, with crit/DH/parry/block), HP after with a bar. Party members' HP is read with each hit/heal (before it applies). Saved with the fight. HP and shield are read as each event arrives (before it applies); the recap shows them after it: damage hits the shield first and only the rest comes off HP (shield is whole % of max HP, so ~1% accuracy). The remaining shield is a teal segment after the HP fill in the HP bar, with the % on hover. Shields have no event of their own, so Studium watches each party member's shield gauge every frame; when it goes up, a teal "+8,000" line is added, named after the status that appeared with it (e.g. Brutal Shell) and its source, with exact HP/shield after. An **On enemy** column shows the party's debuffs on the attacker, then a **Buffs** column (the table fits the window like the meter: Event and Source shrink and cut their text; when that isn't enough, columns drop from the right, Buffs first) the player's statuses (buffs and debuffs like Vulnerability Up, with stack icons). On enemy = the party's debuffs on the attacker (harmful, PartyListPriority 50: Reprisal, Addle, Feint, Dismantle...). The game has no mitigation flag, so the player's statuses are everything except noise: permanent (stances), FC buffs, Well Fed, Medicated, and anything with more than 5 min left. Hover an icon for its name and who applied it.
+2. **Death recap** (built): breakdown window gets a Deaths tab; clicking the meter's Deaths number opens Deaths. Each death shows "mm:ss · killed by <ability> (<source>)" and the last 30 s newest first: time before death, ability (icon), source, amount (red damage / green heal / miss, with crit/DH/parry/block), HP after with a bar. Party members' HP is read with each hit/heal (before it applies). Saved with the fight. HP and shield are read as each event arrives (before it applies); the recap shows them after it: damage hits the shield first and only the rest comes off HP (shield is whole % of max HP, so ~1% accuracy). The remaining shield is a teal segment after the HP fill in the HP bar, with the % on hover. Shields have no event of their own, so Studium watches each party member's shield gauge every frame; when it goes up, a teal "+8,000" line is added, named after the status that appeared with it (e.g. Brutal Shell) and its source, with exact HP/shield after. An **On enemy** column shows the party's debuffs on the attacker, then a **Buffs** column (the table fits the window like the meter: Event and Source shrink and cut their text; when that isn't enough, columns drop from the right, Buffs first) the player's statuses (buffs and debuffs like Vulnerability Up, with stack icons). On enemy = the party's debuffs on the attacker (harmful, PartyListPriority 50: Reprisal, Addle, Feint, Dismantle...). The game has no mitigation flag, so the player's statuses are everything except noise: permanent (stances), FC buffs, Well Fed, Medicated, and anything with more than 5 min left. Hover an icon for its name and who applied it.
 3. ~~DPS-over-time graph~~ dropped: FFLogs + xivanalysis cover it from the uploaded logs (and it would need per-fight time series storage).
 4. **Per-tab column editor** (built): Settings → Meter → Columns. Each tab offers only its own columns (DPS: DPS, D%, Total, Crit, DH, Max hit, Hits, Misses, Deaths; Tank: Taken, T%, Parry, Block, Healed-on, Deaths; Heal: HPS, H%, Total, Overheal, Heal crit, Deaths); show/hide and reorder with arrows, reset per tab. No moving columns between tabs. Hits/Misses start hidden. Name is always first; the first column after it is bright and never drops when narrow.
 5. **Custom plugin repo** (`repo.json`) for sharing with friends.
+6. **DoT split** (agreed 2026-09-25, built; awaiting in-game check). The game sends one DoT tick per target every 3 s summing **every** DoT on it from **every** player, naming one source (cactbot LogGuide, line 24; confirmed in-game: one Bard absorbed the whole party's DoTs). Ground DoTs have their own ticks with the status ID and stay exact. Studium splits the rest, an estimate like ACT's:
+   - **Potency** comes from the tooltip text (`ActionTransient` descriptions, read in English whatever the client language), not a hand-written table, so patches update it. Read once per session at login; a Debug window tab lists potency per skill with its icon for checking.
+   - **Damage per potency** per player: the median of their non-crit, non-DH hits divided by the action's potency, only for actions with one fixed potency (no combo / positional / conditional potencies). The median dampens self-buff windows.
+   - **Split:** each tick is shared between the DoTs on the target, weighted by DoT potency × its owner's damage per potency. A player with no usable hit yet is weighted by potency alone.
+   - The tick's DoTs are every DoT status on the target (with its source) when it lands; each is matched to its action by English name (Stormbite's DoT is "Stormbite") for its potency at the owner's job and level. Unknown potency counts as the tick's average DoT.
+   - Ticks are kept raw (amount + the DoTs and owners present) and every tick of the fight is re-split whenever a new tick lands (and once more at fight end), so earlier ticks always use the latest medians. Raw ticks live in memory only; saved fights keep the final split.
+   - Owners who don't count (other players with "Show all players" off) still weigh in the split, but their share is dropped.
+   - Drill-down: the skill's row, then an indented "DoT" row under it (status icon, "~" before the total, tooltip explaining the estimate), then one gauge for both combined; the pair sorts by the combined total. A DoT whose skill isn't in the fight stays alone as "Stormbite (DoT)". Ticks don't count toward hits, crit or DH.
+   - **HoTs** (added 2026-09-26) are split the same way: every HoT on the player, weighted by HoT potency × its owner's healing per potency (median of fixed-potency, non-crit heals). Heal potencies come from "Cure Potency" lines: a direct heal opens with "Restores…"; the regen's is the line after "…Effect: Regen"; healing-over-time actions (Regen, Physis II, Asylum) have one. A pet's HoT (faerie) uses its owner's job, level and rate, and merges into the owner. Overheal is shared in proportion. The drill-down shows "HoT" under the skill.
+   - **DoTs on party members** (enemy DoTs, damage taken) aren't split: enemy actions have no tooltips, so there's nothing to weigh them by. Their tick row names every DoT on the player, whoever applied it ("DoT ticks (Bleeding + Burns)"), exact.
 
 ## Accuracy expectations
 
 - Direct damage and heals come as exact values from the game, so they should match ACT.
 - These can differ slightly from ACT/FFLogs:
   - shields
-  - DoT attribution edge cases
+  - DoT damage per player (the game only sends the combined tick; Studium estimates the split)
   - overkill damage
   - fight start/end (the DPS divisor)
 
@@ -155,4 +165,4 @@ All options live here, never in the meter.
 7. Fight dropdown (play sessions) and history browser (filters, pin, delete).
 8. FFLogs section: IINACT detection, Uploader launch, FFLogs page link.
 9. Visibility rules, lock, click-through, opacity.
-10. Visual polish: custom styling for header buttons, tabs, rows and gauges (the user expects this pass; until then use stock ImGui widgets). Known items: meter row hover colour (theme purple looks ugly), own-row highlight, header overlap at narrow widths, drill-down window (skill icons, per-ability gauges).
+10. Visual polish (done; see **Look**).

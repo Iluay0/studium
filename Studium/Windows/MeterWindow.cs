@@ -73,7 +73,29 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
             ImGui.PushStyleColor(col, colours[(int)col] with { W = colours[(int)col].W * opacity });
 
         // ### keeps the window ID (position, size) stable while the visible title changes.
-        WindowName = Plugin.DisplayName + (ClickThroughConfigured ? " (Click-through - Ctrl to interact)" : "") + WindowId;
+        WindowName = Title() + WindowId;
+    }
+
+    /// <summary>Width of the window last frame, to fit the title bar text.</summary>
+    private float lastWidth;
+
+    /// <summary>
+    /// The longest title that fits beside the title bar buttons: the click-through hint shortens, then goes.
+    /// </summary>
+    private string Title()
+    {
+        if (!ClickThroughConfigured)
+            return Plugin.DisplayName;
+        // Title bar buttons (ours, collapse, close, and Dalamud's ☰) plus padding.
+        var buttons = TitleBarButtons.Count + 3;
+        var available = lastWidth - (buttons * ImGui.GetFrameHeight()) - (ImGui.GetStyle().FramePadding.X * 4);
+        string[] titles =
+        [
+            $"{Plugin.DisplayName} (Click-through - Ctrl to interact)",
+            $"{Plugin.DisplayName} (Ctrl to interact)",
+            Plugin.DisplayName,
+        ];
+        return lastWidth <= 0 ? titles[^1] : titles.FirstOrDefault(t => ImGui.CalcTextSize(t).X <= available) ?? titles[^1];
     }
 
     private static readonly ImGuiCol[] TitleColours = [ImGuiCol.TitleBg, ImGuiCol.TitleBgActive, ImGuiCol.TitleBgCollapsed];
@@ -86,6 +108,7 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
 
     public override void Draw()
     {
+        lastWidth = ImGui.GetWindowWidth();
         // Text shadows keep the meter readable over the game when its background is see-through.
         Widgets.Shadow = true;
         try
@@ -276,9 +299,6 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
             return;
 
         var tracker = plugin.Fights.Tracker;
-        if (tracker.Current is { } live && ImGui.Selectable($"LIVE  {live.Name}  {Format.Duration(live.Duration(DateTime.UtcNow))}", shown == live))
-            viewedFight = null;
-
         var character = plugin.Fights.CurrentCharacterKey;
         var candidates = plugin.History.Entries.Where(e =>
             (character == null || HistoryFilter.CharacterKey(e) == character)
@@ -288,20 +308,57 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
         if (fights.Count == 0 && tracker.Current == null)
             ImGui.TextDisabled("No fights yet this session.");
 
+        // "04:31 [Clear] Magitek Gobwidow G-IX": duration, outcome, name. Durations take the widest one's width and
+        // the outcome slot the widest chip's, so chips and names line up.
+        var liveDuration = tracker.Current?.Duration(DateTime.UtcNow);
+        var durationSlot = fights.Select(e => Format.Duration(TimeSpan.FromSeconds(e.DurationSeconds)))
+            .Append(liveDuration is { } d ? Format.Duration(d) : "00:00")
+            .Max(t => ImGui.CalcTextSize(t).X);
+        var chipSlot = new[] { "Live", "Clear", "Wipe" }.Max(t => ImGui.CalcTextSize(t).X) + 10;
+        if (tracker.Current is { } live && FightItem("live", "Live", Theme.Accent, liveDuration!.Value, live.Name, shown == live, durationSlot, chipSlot))
+            viewedFight = null;
+
         foreach (var entry in fights)
         {
-            var entryOutcome = entry.Outcome switch
+            var (chip, colour) = entry.Outcome switch
             {
-                FightOutcome.Clear => "  clear",
-                FightOutcome.Wipe => "  wipe",
-                _ => string.Empty,
+                FightOutcome.Clear => ("Clear", Theme.Clear),
+                FightOutcome.Wipe => ("Wipe", Theme.Wipe),
+                _ => ((string?)null, Theme.Dim),
             };
-            var text = $"{entry.Start.ToLocalTime():HH:mm}  {entry.Name}  {Format.Duration(TimeSpan.FromSeconds(entry.DurationSeconds))}{entryOutcome}##{entry.Id}";
-            if (ImGui.Selectable(text, shown?.Id == entry.Id) && plugin.History.Open(entry.Id) is { } picked)
+            if (FightItem(entry.Id.ToString(), chip, colour, TimeSpan.FromSeconds(entry.DurationSeconds), entry.Name, shown?.Id == entry.Id, durationSlot, chipSlot)
+                && plugin.History.Open(entry.Id) is { } picked)
                 viewedFight = picked == tracker.Last ? null : picked;
         }
 
         ImGui.EndPopup();
+    }
+
+    /// <summary>One dropdown line: "mm:ss [chip] Name". No chip (unknown outcome) leaves a dim "—" centred in its slot.</summary>
+    private static bool FightItem(string id, string? chip, Vector4 chipColour, TimeSpan duration, string name, bool selected,
+        float durationSlot, float chipSlot)
+    {
+        const float gap = 8;
+        var lineHeight = ImGui.GetTextLineHeight();
+        var origin = ImGui.GetCursorPos();
+        var clicked = ImGui.Selectable($"##fight{id}", selected, ImGuiSelectableFlags.None, new Vector2(0, lineHeight));
+        var after = ImGui.GetCursorPos();
+
+        var durationText = Format.Duration(duration);
+        ImGui.SetCursorPos(origin with { X = origin.X + durationSlot - ImGui.CalcTextSize(durationText).X }); // right-aligned
+        Widgets.Text(Theme.Muted, durationText);
+
+        var chipX = origin.X + durationSlot + gap;
+        ImGui.SetCursorPos(origin with { X = chip != null ? chipX : chipX + ((chipSlot - ImGui.CalcTextSize("—").X) / 2) });
+        if (chip != null)
+            Widgets.Chip(chip, chipColour);
+        else
+            Widgets.Text(Theme.Dim, "—");
+
+        ImGui.SetCursorPos(origin with { X = chipX + chipSlot + gap });
+        Widgets.Text(Theme.Text, name);
+        ImGui.SetCursorPos(after);
+        return clicked;
     }
 
     private sealed record Column(string Id, string Header, Func<CombatantRow, string> Value, Func<CombatantRow, string?>? Tooltip = null);

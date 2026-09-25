@@ -16,6 +16,8 @@ public abstract record CombatEvent(DateTime Time);
 /// <summary>
 /// One effect of an action (or auto-attack) landing on one target.
 /// <see cref="SourceOwnerId"/> is the owner's entity ID when the source is a pet, 0 otherwise.
+/// <see cref="Potency"/> is the action's potency for its user's job and level, only when it always hits at that
+/// potency (no combo, positional or falloff); null for pets, NPCs, auto-attacks and situational potencies.
 /// </summary>
 public sealed record ActionHitEvent(
     DateTime Time,
@@ -30,7 +32,8 @@ public sealed record ActionHitEvent(
     bool DirectHit,
     long Overheal = 0,
     TargetHp? Hp = null,
-    DefenseSnapshot? Defense = null) : CombatEvent(Time);
+    DefenseSnapshot? Defense = null,
+    int? Potency = null) : CombatEvent(Time);
 
 /// <summary>The target's HP when the event arrived (before it was applied). Only read for party members.</summary>
 public readonly record struct TargetHp(uint Current, uint Max);
@@ -45,8 +48,17 @@ public sealed record StatusSnapshot(uint StatusId, byte Stacks, string SourceNam
 public sealed record DefenseSnapshot(IReadOnlyList<StatusSnapshot> Target, IReadOnlyList<StatusSnapshot> OnAttacker, byte ShieldPercent);
 
 /// <summary>
-/// A DoT or HoT tick. The game names the source on the tick itself, but not which DoT / HoT it is:
-/// <see cref="StatusIds"/> are the source's DoTs (or HoTs) that were on the target when it ticked.
+/// One DoT (or HoT) on the target when a tick landed: the status, who applied it (and their owner, for pets like
+/// a faerie), the action it comes from (0 when unknown) and its per-tick potency for that player's job and level
+/// (0 when unknown).
+/// </summary>
+public sealed record DotOnTarget(uint StatusId, uint SourceId, uint ActionId, int Potency, uint SourceOwnerId = 0);
+
+/// <summary>
+/// A DoT or HoT tick. The game names one source on the tick, but the amount is the sum of every DoT (HoT) on
+/// the target from every player, except ground effects, which tick on their own.
+/// <see cref="StatusIds"/> are the named source's DoTs (or HoTs) on the target when it ticked.
+/// <see cref="Dots"/> is every DoT on an enemy (or HoT on a player) from anyone: the tick is split between them.
 /// </summary>
 public sealed record PeriodicTickEvent(
     DateTime Time,
@@ -58,7 +70,8 @@ public sealed record PeriodicTickEvent(
     long Overheal = 0,
     IReadOnlyList<uint>? StatusIds = null,
     TargetHp? Hp = null,
-    DefenseSnapshot? Defense = null) : CombatEvent(Time);
+    DefenseSnapshot? Defense = null,
+    IReadOnlyList<DotOnTarget>? Dots = null) : CombatEvent(Time);
 
 public static class Overheal
 {

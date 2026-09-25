@@ -43,21 +43,19 @@ public class PlaySessionsTests
     }
 
     [Fact]
-    public void ShortSessionIsToppedUpWithEarlierFights()
+    public void DropdownShowsOnlyTheCurrentSession()
     {
         var older = Enumerable.Range(0, 20).Select(i => Entry(Night.AddDays(-1).AddMinutes(i * 10))).ToList();
         var tonight = new[] { Entry(Night), Entry(Night.AddMinutes(10)) };
         var dropdown = PlaySessions.DropdownFights(older.Concat(tonight), Night.AddMinutes(20), Gap);
-        Assert.Equal(PlaySessions.DropdownMinimum, dropdown.Count);
-        Assert.Equal(tonight[1], dropdown[0]);
+        Assert.Equal([tonight[1], tonight[0]], dropdown);
     }
 
     [Fact]
-    public void AfterLongBreakDropdownShowsRecentFights()
+    public void AfterLongBreakDropdownIsEmpty()
     {
         var older = Enumerable.Range(0, 20).Select(i => Entry(Night.AddMinutes(i * 10))).ToList();
-        var dropdown = PlaySessions.DropdownFights(older, Night.AddDays(2), Gap);
-        Assert.Equal(PlaySessions.DropdownMinimum, dropdown.Count);
+        Assert.Empty(PlaySessions.DropdownFights(older, Night.AddDays(2), Gap));
     }
 
     [Fact]
