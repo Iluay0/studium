@@ -3,7 +3,7 @@
     "Author": "Iluay",
     "Name": "Studium",
     "InternalName": "Studium",
-    "AssemblyVersion": "0.1.1.0",
+    "AssemblyVersion": "0.1.2.0",
     "Description": "Live DPS/tank/heal meter with persistent, browsable fight history. /studium or /dps to open.",
     "ApplicableVersion": "any",
     "RepoUrl": "https://github.com/Iluay0/studium",
@@ -17,8 +17,8 @@
     "Punchline": "In-game DPS meter and fight history.",
     "IsHide": "False",
     "IsTestingExclusive": "False",
-    "DownloadLinkInstall": "https://github.com/Iluay0/studium/releases/download/v0.1.1.0/latest.zip",
-    "DownloadLinkUpdate": "https://github.com/Iluay0/studium/releases/download/v0.1.1.0/latest.zip",
-    "LastUpdate": "1790228698"
+    "DownloadLinkInstall": "https://github.com/Iluay0/studium/releases/download/v0.1.2.0/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/Iluay0/studium/releases/download/v0.1.2.0/latest.zip",
+    "LastUpdate": "1790375883"
   }
 ]
