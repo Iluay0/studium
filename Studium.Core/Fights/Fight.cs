@@ -30,6 +30,12 @@ public sealed class CombatantStats
     /// <summary>Healing per potency point of each fixed-potency, non-crit heal: weighs this player's HoTs the same way.</summary>
     [JsonIgnore]
     public List<double> HealPotencySamples { get; } = new();
+    /// <summary>
+    /// Damage per potency point of each fixed-potency, non-crit hit, by action (direct hits divided out): what a DoT
+    /// applied by that action locks in, since a DoT keeps the buffs its applying hit had.
+    /// </summary>
+    [JsonIgnore]
+    public Dictionary<uint, List<double>> ActionPotencySamples { get; } = new();
     /// <summary>Direct hits that landed (DoT ticks excluded: the game doesn't flag their crits).</summary>
     public int Hits { get; set; }
     public int Crits { get; set; }
@@ -171,6 +177,13 @@ public sealed class Fight
     /// <summary>DoT ticks on enemies as the game sent them, re-split as the fight goes on. Only needed while it runs.</summary>
     [JsonIgnore]
     public List<DotTick> DotTicks { get; } = new();
+
+    /// <summary>
+    /// Each player's latest fixed-potency hit per target and action: when, and its damage per potency (null for a
+    /// crit, whose multiplier depends on gear). A DoT's ticks are weighted by the hit that applied it.
+    /// </summary>
+    [JsonIgnore]
+    public Dictionary<(uint Source, uint Target, uint Action), (DateTime Time, double? Rate)> LastHits { get; } = new();
 
     /// <summary>HoT ticks on players, kept the same way.</summary>
     [JsonIgnore]

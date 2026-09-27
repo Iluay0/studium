@@ -17,7 +17,7 @@ Standalone Dalamud plugin: in-game DPS meter and fight history. Commands: `/stud
 - `DALAMUD_HOME` is unset. Dalamud.NET.Sdk falls back to the path above on Linux.
 - .NET SDK 10 (also 8). Target `net10.0-windows` with `Dalamud.NET.Sdk/15.x`, matching IINACT and WrathCombo in `~/Code/FFXIVPlugins/`.
 - The game runs under Wine. Paths the plugin sees are Wine paths. Launch Linux binaries (e.g. the FFLogs Uploader AppImage) through `start /unix`.
-- IINACT logs (for reference/testing only): `~/.xlcore/wineprefix/drive_c/users/dory/Documents/IINACT/Network_*.log`.
+- IINACT logs (for reference/testing only): `~/Documents/IINACT/Network_*.log` (IINACT `LogFilePath` is `Z:\home\dory\Documents\IINACT`; the wineprefix `Documents/IINACT` folder stopped updating on 2026-09-24).
 
 ## Build & verify
 - Build: `dotnet build`.

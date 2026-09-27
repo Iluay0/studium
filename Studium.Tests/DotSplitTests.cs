@@ -155,6 +155,84 @@ public class DotSplitTests
     }
 
     [Fact]
+    public void DotsOfPlayersOnTheMeterCountOnEnemiesTheFightDoesntKnow()
+    {
+        const uint Add = 101;
+        var tracker = new FightTracker(new PartyWorld());
+        tracker.Handle(new ActionHitEvent(T0, Bard, 0, Boss, HeavyShot, 1, HitKind.Damage, 1600, false, false, Potency: 160));
+        tracker.Handle(new ActionHitEvent(T0, Stranger, 0, Boss, HeavyShot, 1, HitKind.Damage, 1600, false, false, Potency: 160));
+        tracker.Handle(new PeriodicTickEvent(T0.AddSeconds(3), Stranger, 0, Add, false, 900, Dots:
+            [new DotOnTarget(Stormbite, Stranger, StormbiteAction, 25)]));
+
+        var fight = tracker.Current!;
+        Assert.Equal(900, fight.Combatants[Stranger].DotDamage);
+        Assert.False(fight.Enemies.ContainsKey(Add));
+    }
+
+    private const uint ThunderAction = 153, FireIV = 3577;
+
+    private static ActionHitEvent Applying(double seconds, uint source, uint action, long amount, bool crit = false, bool dh = false) =>
+        new(T0.AddSeconds(seconds), source, 0, Boss, action, 1, HitKind.Damage, amount, crit, dh, Potency: 100);
+
+    private static readonly DotOnTarget[] BardAndThunder =
+        [new(Stormbite, Bard, StormbiteAction, 50), new(ThunderIII, BlackMage, ThunderAction, 50)];
+
+    private static PeriodicTickEvent DotTickAt(double seconds, long amount) =>
+        new(T0.AddSeconds(seconds), Bard, 0, Boss, false, amount, Dots: BardAndThunder);
+
+    [Fact]
+    public void DotsUseTheRateOfTheHitThatAppliedThem()
+    {
+        var tracker = new FightTracker(new PartyWorld());
+        // Astral Fire makes Fire IV hit at 18/potency, but Thunder, like the Bard, at 10: the DoTs are equal.
+        tracker.Handle(Applying(0, BlackMage, FireIV, 1800));
+        tracker.Handle(Applying(0, BlackMage, FireIV, 1800));
+        tracker.Handle(Applying(1, BlackMage, ThunderAction, 1000));
+        tracker.Handle(Applying(1, Bard, StormbiteAction, 1000));
+        tracker.Handle(DotTickAt(3, 1000));
+
+        Assert.Equal(500, tracker.Current!.Combatants[BlackMage].DotDamage);
+    }
+
+    [Fact]
+    public void ADirectHitApplyingHitCountsWithoutItsBonus()
+    {
+        var tracker = new FightTracker(new PartyWorld());
+        tracker.Handle(Applying(0, BlackMage, ThunderAction, 1250, dh: true)); // 10/potency once the ×1.25 is removed
+        tracker.Handle(Applying(0, Bard, StormbiteAction, 1000));
+        tracker.Handle(DotTickAt(3, 1000));
+
+        Assert.Equal(500, tracker.Current!.Combatants[BlackMage].DotDamage);
+    }
+
+    [Fact]
+    public void ACritApplyingHitFallsBackToThePlayersCleanApplyingHits()
+    {
+        var tracker = new FightTracker(new PartyWorld());
+        tracker.Handle(Applying(0, BlackMage, FireIV, 1800));
+        tracker.Handle(Applying(0, BlackMage, ThunderAction, 1000));
+        tracker.Handle(Applying(0, Bard, StormbiteAction, 1000));
+        tracker.Handle(Applying(30, BlackMage, ThunderAction, 3000, crit: true)); // re-applied with a crit
+        tracker.Handle(DotTickAt(33, 1000));
+
+        // The crit's multiplier is unknown, so Thunder uses the earlier clean Thunder (10), not Fire IV (18).
+        Assert.Equal(500, tracker.Current!.Combatants[BlackMage].DotDamage);
+    }
+
+    [Fact]
+    public void IronJawsReappliesTheBardsDots()
+    {
+        var tracker = new FightTracker(new PartyWorld());
+        tracker.Handle(Applying(0, BlackMage, ThunderAction, 1000));
+        tracker.Handle(Applying(0, Bard, StormbiteAction, 1000));
+        tracker.Handle(Applying(10, Bard, FightTracker.IronJaws, 2000)); // refreshed inside buffs: 20/potency
+        tracker.Handle(DotTickAt(12, 1500));
+
+        Assert.Equal(1000, tracker.Current!.Combatants[Bard].DotDamage);
+        Assert.Equal(500, tracker.Current.Combatants[BlackMage].DotDamage);
+    }
+
+    [Fact]
     public void AbilityRowsShowSplitDotsAsTicks()
     {
         var tracker = new FightTracker(new PartyWorld());

@@ -479,6 +479,20 @@ public class FightTrackerTests
     }
 
     [Fact]
+    public void OtherPlayersOnTheMeterCountOnEveryEnemy()
+    {
+        tracker.Handle(Hit(0, Me, Boss, 1000));
+        tracker.Handle(Hit(1, Stranger, Boss, 5000));
+        tracker.Handle(Hit(20, Stranger, OtherMob, 3000)); // an add only their party fights
+
+        var fight = tracker.Current!;
+        Assert.Equal(8000, fight.Combatants[Stranger].Damage);
+        // The mob doesn't join the fight, and hitting it doesn't keep the fight going.
+        Assert.DoesNotContain(OtherMob, fight.Enemies.Keys);
+        Assert.Equal(T0.AddSeconds(1), fight.LastActivity);
+    }
+
+    [Fact]
     public void OtherPlayersCanBeTurnedOff()
     {
         tracker.IncludeOtherPlayers = false;

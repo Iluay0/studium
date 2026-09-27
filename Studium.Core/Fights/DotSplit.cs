@@ -5,21 +5,28 @@ namespace Studium.Core.Fights;
 /// <summary>
 /// A DoT tick on an enemy (or HoT tick on a player) as the game sent it: one amount for every DoT (HoT) on the
 /// target. <see cref="Counted"/> are the sources whose share is recorded, decided when the tick landed.
+/// <see cref="AppliedRates"/> (DoTs only, one per entry of <see cref="Dots"/>) is the damage per potency of the hit
+/// that applied each DoT, or null when unknown or a crit.
 /// </summary>
-public sealed record DotTick(DateTime Time, uint TargetId, long Amount, IReadOnlyList<DotOnTarget> Dots, IReadOnlySet<uint> Counted, long Overheal = 0);
+public sealed record DotTick(DateTime Time, uint TargetId, long Amount, IReadOnlyList<DotOnTarget> Dots, IReadOnlySet<uint> Counted,
+    long Overheal = 0, IReadOnlyList<double?>? AppliedRates = null);
 
 /// <summary>One DoT's (HoT's) share of one tick, with its part of the tick's overheal.</summary>
 public readonly record struct DotShare(uint SourceId, uint SourceOwnerId, uint StatusId, uint ActionId, long Amount, long Overheal = 0);
 
 /// <summary>
 /// Splits combined DoT (HoT) ticks between the DoTs (HoTs) that were on the target. The game only sends the sum,
-/// so this is an estimate: each is weighted by its potency × its owner's damage (healing) per potency, the median
-/// of their fixed-potency, non-crit, non-DH hits (heals). A pet's HoT uses its owner's rate. Owners with no such
-/// hit yet count as the median player; unknown potencies count as the tick's average one.
+/// so this is an estimate: each is weighted by its potency × a damage (healing) per potency. A DoT keeps the buffs
+/// of the hit that applied it, so that hit's rate comes first; if it was a crit, the median of the player's clean
+/// DoT-applying hits; then the median of all their fixed-potency, non-crit, non-DH hits (heals), which buffs that
+/// skip DoTs (Astral Fire) inflate. A pet's HoT uses its owner's rate. Owners with no such hit yet count as the
+/// median player; unknown potencies count as the tick's average one.
 /// </summary>
 public static class DotSplit
 {
-    public static IEnumerable<DotShare> Split(DotTick tick, IReadOnlyDictionary<uint, double> damagePerPotency)
+    /// <param name="dotRates">Per player, the median damage per potency of their clean DoT-applying hits.</param>
+    public static IEnumerable<DotShare> Split(DotTick tick, IReadOnlyDictionary<uint, double> damagePerPotency,
+        IReadOnlyDictionary<uint, double>? dotRates = null)
     {
         var dots = tick.Dots;
         if (dots.Count == 0)
@@ -39,7 +46,10 @@ public static class DotSplit
         {
             var potency = dots[i].Potency > 0 ? dots[i].Potency : fallbackPotency;
             var rateOwner = dots[i].SourceOwnerId != 0 ? dots[i].SourceOwnerId : dots[i].SourceId;
-            var rate = damagePerPotency.TryGetValue(rateOwner, out var r) ? r : fallbackRate;
+            var rate = tick.AppliedRates?[i] is { } applied ? applied
+                : dotRates != null && dotRates.TryGetValue(dots[i].SourceId, out var d) ? d
+                : damagePerPotency.TryGetValue(rateOwner, out var r) ? r
+                : fallbackRate;
             weights[i] = potency * rate;
         }
 

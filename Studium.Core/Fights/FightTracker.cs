@@ -194,13 +194,20 @@ public sealed class FightTracker
         var targetIsAlly = Counts(hit.TargetId, 0);
         var allyInvolved = IsAllyOrAllyPet(hit.SourceId, hit.SourceOwnerId) || world.IsAlly(hit.TargetId);
         // Other players only count against enemies your party / alliance is already fighting, so people
-        // fighting unrelated mobs nearby don't leak into (or prolong) your fight.
+        // fighting unrelated mobs nearby don't leak into (or prolong) your fight. Once on the meter, though,
+        // everything they hit counts (adds only other parties fight), without making it part of the fight.
+        var onlyOnMeter = false;
         if (!allyInvolved && !FightsKnownEnemy(hit.SourceId, hit.SourceOwnerId, hit.TargetId, sourceIsAlly))
-            return;
+        {
+            if (hit.Kind is not (HitKind.Damage or HitKind.BlockedDamage or HitKind.ParriedDamage or HitKind.Miss)
+                || targetIsAlly || !OnMeter(hit.SourceId, hit.SourceOwnerId))
+                return;
+            onlyOnMeter = true;
+        }
 
         if (hit.Kind is HitKind.Damage or HitKind.BlockedDamage or HitKind.ParriedDamage)
         {
-            if (!EnsureFight(hit.Time, sourceIsAlly, targetIsAlly, allyInvolved))
+            if (!onlyOnMeter && !EnsureFight(hit.Time, sourceIsAlly, targetIsAlly, allyInvolved))
                 return;
 
             if (sourceIsAlly && !targetIsAlly)
@@ -220,7 +227,10 @@ public sealed class FightTracker
                 Ability(attacker.DamageAbilities, hit.ActionId).Add(hit.Amount, hit.Crit, hit.DirectHit);
                 if (hit is { Kind: HitKind.Damage, Crit: false, DirectHit: false, Potency: > 0 } && hit.Amount > 0)
                     attacker.PotencySamples.Add((double)hit.Amount / hit.Potency.Value);
-                AddEnemyDamage(hit.TargetId, hit.Amount);
+                if (hit is { Kind: HitKind.Damage, Potency: > 0 } && hit.Amount > 0)
+                    NoteFixedHit(attacker, hit);
+                if (!onlyOnMeter)
+                    AddEnemyDamage(hit.TargetId, hit.Amount);
             }
 
             if (targetIsAlly && !sourceIsAlly)
@@ -292,9 +302,19 @@ public sealed class FightTracker
         var targetIsAlly = Counts(tick.TargetId, 0);
         var allyInvolved = IsAllyOrAllyPet(tick.SourceId, tick.SourceOwnerId) || world.IsAlly(tick.TargetId);
         // Other players only count against enemies your party / alliance is already fighting, so people
-        // fighting unrelated mobs nearby don't leak into (or prolong) your fight.
+        // fighting unrelated mobs nearby don't leak into (or prolong) your fight. Once on the meter, their
+        // DoTs count on anything (see HandleHit).
         if (!allyInvolved && !FightsKnownEnemy(tick.SourceId, tick.SourceOwnerId, tick.TargetId, sourceIsAlly))
+        {
+            if (!tick.IsHeal && !targetIsAlly && OnMeter(tick.SourceId, tick.SourceOwnerId))
+            {
+                var dotter = Stats(tick.SourceId, tick.SourceOwnerId);
+                dotter.Damage += tick.Amount;
+                dotter.DotDamage += tick.Amount;
+                RecordTick(dotter.DamageAbilities, tick);
+            }
             return;
+        }
 
         if (tick.IsHeal)
         {
@@ -348,12 +368,23 @@ public sealed class FightTracker
         var allyInvolved = world.IsAlly(tick.SourceId) || dots.Any(d => IsAllyOrAllyPet(d.SourceId, d.SourceOwnerId));
         var counted = dots.Where(d => Counts(d.SourceId, d.SourceOwnerId)).Select(d => d.SourceId).ToHashSet();
         if (!allyInvolved && !FightsKnownEnemy(tick.SourceId, 0, tick.TargetId, sourceIsPlayer: true))
+        {
+            // An enemy the fight doesn't know: only the shares of players already on the meter count (see HandleHit).
+            counted = dots.Where(d => OnMeter(d.SourceId, d.SourceOwnerId)).Select(d => d.SourceId).ToHashSet();
+            if (counted.Count == 0)
+                return;
+            Current!.DotTicks.Add(new DotTick(tick.Time, tick.TargetId, tick.Amount, dots, counted,
+                AppliedRates: AppliedRates(Current, tick.TargetId, dots)));
+            NoteActions(Current, dots);
+            Resplit(heal: false);
             return;
+        }
         if (!EnsureFight(tick.Time, counted.Count > 0, false, allyInvolved))
             return;
 
         var fight = Current!;
-        fight.DotTicks.Add(new DotTick(tick.Time, tick.TargetId, tick.Amount, dots, counted));
+        fight.DotTicks.Add(new DotTick(tick.Time, tick.TargetId, tick.Amount, dots, counted,
+            AppliedRates: AppliedRates(fight, tick.TargetId, dots)));
         NoteActions(fight, dots);
         AddEnemyDamage(tick.TargetId, tick.Amount);
         Resplit(heal: false);
@@ -381,6 +412,49 @@ public sealed class FightTracker
         Resplit(heal: true);
     }
 
+    /// <summary>A direct hit deals exactly this much more; a crit's multiplier depends on gear.</summary>
+    private const double DirectHitMultiplier = 1.25;
+
+    /// <summary>Iron Jaws: its hit re-applies the Bard's DoTs on the target, locking in that moment's buffs.</summary>
+    public const uint IronJaws = 3560;
+
+    /// <summary>Keeps a fixed-potency hit as the possible applying hit of a DoT (see <see cref="Fight.LastHits"/>).</summary>
+    private void NoteFixedHit(CombatantStats attacker, ActionHitEvent hit)
+    {
+        double? rate = hit.Crit ? null : hit.Amount / (double)hit.Potency!.Value / (hit.DirectHit ? DirectHitMultiplier : 1);
+        Current!.LastHits[(hit.SourceId, hit.TargetId, hit.ActionId)] = (hit.Time, rate);
+        if (rate is not { } clean)
+            return;
+        if (!attacker.ActionPotencySamples.TryGetValue(hit.ActionId, out var samples))
+            attacker.ActionPotencySamples[hit.ActionId] = samples = new List<double>();
+        samples.Add(clean);
+    }
+
+    /// <summary>For each DoT, the rate of the latest hit that applied it: its own action, or Iron Jaws.</summary>
+    private static IReadOnlyList<double?> AppliedRates(Fight fight, uint targetId, IReadOnlyList<DotOnTarget> dots) =>
+        dots.Select(dot =>
+        {
+            if (dot.ActionId == 0)
+                return null;
+            fight.LastHits.TryGetValue((dot.SourceId, targetId, dot.ActionId), out var own);
+            fight.LastHits.TryGetValue((dot.SourceId, targetId, IronJaws), out var jaws);
+            return jaws.Time > own.Time ? jaws.Rate : own.Rate;
+        }).ToList();
+
+    /// <summary>Per player, the median damage per potency of their clean hits with DoT-applying actions.</summary>
+    private static Dictionary<uint, double> DotApplyingRates(Fight fight)
+    {
+        var applying = fight.DotActions.Values.Append(IronJaws).ToHashSet();
+        var rates = new Dictionary<uint, double>();
+        foreach (var combatant in fight.Combatants.Values)
+        {
+            var samples = combatant.ActionPotencySamples.Where(a => applying.Contains(a.Key)).SelectMany(a => a.Value).ToList();
+            if (samples.Count > 0)
+                rates[combatant.Id] = DotSplit.Median(samples);
+        }
+        return rates;
+    }
+
     private static void NoteActions(Fight fight, IReadOnlyList<DotOnTarget> dots)
     {
         foreach (var dot in dots)
@@ -398,6 +472,7 @@ public sealed class FightTracker
     {
         var fight = Current!;
         var rates = new Dictionary<uint, double>();
+        var dotRates = heal ? null : DotApplyingRates(fight);
         foreach (var combatant in fight.Combatants.Values)
         {
             var samples = heal ? combatant.HealPotencySamples : combatant.PotencySamples;
@@ -423,7 +498,7 @@ public sealed class FightTracker
 
         foreach (var tick in heal ? fight.HotTicks : fight.DotTicks)
         {
-            foreach (var share in DotSplit.Split(tick, rates))
+            foreach (var share in DotSplit.Split(tick, rates, dotRates))
             {
                 if (!tick.Counted.Contains(share.SourceId))
                     continue;
@@ -493,6 +568,11 @@ public sealed class FightTracker
         var enemyId = sourceIsPlayer ? targetId : sourceOwnerId != 0 ? sourceOwnerId : sourceId;
         return Current.Enemies.ContainsKey(enemyId);
     }
+
+    /// <summary>Whether this counted player (or the pet's owner) is already on the current fight's meter.</summary>
+    private bool OnMeter(uint id, uint ownerId) =>
+        Current != null && Counts(id, ownerId)
+        && (Current.Combatants.ContainsKey(id) || (ownerId != 0 && Current.Combatants.ContainsKey(ownerId)));
 
     /// <summary>Whether this actor's numbers are recorded: allies, and other players (and their pets) when enabled.</summary>
     private bool Counts(uint id, uint ownerId) =>
