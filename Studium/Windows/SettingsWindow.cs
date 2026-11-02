@@ -119,6 +119,15 @@ public sealed class SettingsWindow : Window
 
             Row("Players");
             changed |= Checkbox("Show all players", () => Config.ShowAllPlayers, v => Config.ShowAllPlayers = v);
+
+            Row("Range");
+            var range = Config.MaxRange;
+            ImGui.SetNextItemWidth(200);
+            if (ImGui.SliderInt("##maxRange", ref range, 20, 200, "%d yalms"))
+            {
+                Config.MaxRange = Math.Clamp(range, 20, 200);
+                changed = true;
+            }
         }
 
         return changed;
@@ -249,13 +258,7 @@ public sealed class SettingsWindow : Window
 
         using (Section("Short fights"))
         {
-            Row("Don't save under");
-            changed |= Checkbox("##skipShort", () => Config.SkipShortFights, v => Config.SkipShortFights = v);
-            ImGui.SameLine();
-            using (Disabled(!Config.SkipShortFights))
-                changed |= SecondsInput("##skipShortSeconds", "s", () => Config.SkipShortFightsSeconds, v => Config.SkipShortFightsSeconds = v);
-
-            Row("Hide in lists under");
+            Row("Hide shorter than");
             changed |= SecondsInput("##hideShort", "s", () => Config.HideShortFightsSeconds, v => Config.HideShortFightsSeconds = v);
         }
 

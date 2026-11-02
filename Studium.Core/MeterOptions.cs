@@ -27,6 +27,12 @@ public enum MeterTab
     Heal,
 }
 
+public enum MeterScope
+{
+    Fight,
+    Area,
+}
+
 public static class MeterVisibilityRules
 {
     public static bool ShouldShow(MeterVisibility visibility, bool partyInCombat, bool inDuty, bool fightRunning) => visibility switch

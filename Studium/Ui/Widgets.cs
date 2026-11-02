@@ -90,9 +90,9 @@ public static class Widgets
 
     private static uint U32(Vector4 colour) => Theme.U32(colour);
 
-    public static bool FlatIconButton(string id, FontAwesomeIcon icon, string tooltip)
+    public static bool FlatIconButton(string id, FontAwesomeIcon icon, string tooltip, float? side = null)
     {
-        var size = new Vector2(ImGui.GetFrameHeight());
+        var size = new Vector2(side ?? ImGui.GetFrameHeight());
         var start = ImGui.GetCursorScreenPos();
         var clicked = ImGui.InvisibleButton(id, size);
         var hovered = ImGui.IsItemHovered();

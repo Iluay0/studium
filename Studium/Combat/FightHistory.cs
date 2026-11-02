@@ -47,9 +47,6 @@ public sealed class FightHistory : IDisposable
 
     private void OnFightEnded(Fight fight)
     {
-        if (config.SkipShortFights && fight.FinalDuration.TotalSeconds < config.SkipShortFightsSeconds)
-            return;
-
         sessionFights.Add(fight);
         sessionEntries[fight.Id] = FightIndexEntry.From(fight);
         entriesDirty = true;

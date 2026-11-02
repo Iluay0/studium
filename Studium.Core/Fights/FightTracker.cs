@@ -15,6 +15,10 @@ public interface ICombatWorld
     bool IsDead(uint entityId) => false;
 
     bool IsEngaged(uint entityId) => false;
+
+    uint LocalPlayerId => 0;
+
+    float? DistanceTo(uint entityId) => null;
 }
 
 public sealed class FightTracker
@@ -42,6 +46,8 @@ public sealed class FightTracker
     public event Action<Fight>? FightEnded;
 
     public bool IncludeOtherPlayers { get; set; } = true;
+
+    public float MaxRange { get; set; } = 128;
 
     public Func<FightContext>? ContextProvider { get; set; }
 
@@ -157,6 +163,9 @@ public sealed class FightTracker
 
     private void HandleHit(ActionHitEvent hit)
     {
+        if (EventOutOfRange(hit.SourceId, hit.SourceOwnerId, hit.TargetId))
+            return;
+
         var sourceIsAlly = Counts(hit.SourceId, hit.SourceOwnerId);
         var targetIsAlly = Counts(hit.TargetId, 0);
         var allyInvolved = IsAllyOrAllyPet(hit.SourceId, hit.SourceOwnerId) || world.IsAlly(hit.TargetId);
@@ -262,6 +271,8 @@ public sealed class FightTracker
             HandleHotTick(tick, tick.Dots);
             return;
         }
+        if (EventOutOfRange(tick.SourceId, tick.SourceOwnerId, tick.TargetId))
+            return;
 
         var sourceIsAlly = Counts(tick.SourceId, tick.SourceOwnerId);
         var targetIsAlly = Counts(tick.TargetId, 0);
@@ -324,11 +335,13 @@ public sealed class FightTracker
     // Ticks are kept raw and re-split as the rates improve.
     private void HandleDotTick(PeriodicTickEvent tick, IReadOnlyList<DotOnTarget> dots)
     {
-        var allyInvolved = world.IsAlly(tick.SourceId) || dots.Any(d => IsAllyOrAllyPet(d.SourceId, d.SourceOwnerId));
-        var counted = dots.Where(d => Counts(d.SourceId, d.SourceOwnerId)).Select(d => d.SourceId).ToHashSet();
+        var near = dots.Where(d => !OutOfRange(d.SourceId, d.SourceOwnerId)).ToList();
+        var allyInvolved = (world.IsAlly(tick.SourceId) && !OutOfRange(tick.SourceId, 0))
+            || near.Any(d => IsAllyOrAllyPet(d.SourceId, d.SourceOwnerId));
+        var counted = near.Where(d => Counts(d.SourceId, d.SourceOwnerId)).Select(d => d.SourceId).ToHashSet();
         if (!allyInvolved && !FightsKnownEnemy(tick.SourceId, 0, tick.TargetId, sourceIsPlayer: true))
         {
-            counted = dots.Where(d => OnMeter(d.SourceId, d.SourceOwnerId)).Select(d => d.SourceId).ToHashSet();
+            counted = near.Where(d => OnMeter(d.SourceId, d.SourceOwnerId)).Select(d => d.SourceId).ToHashSet();
             if (counted.Count == 0)
                 return;
             Current!.DotTicks.Add(new DotTick(tick.Time, tick.TargetId, tick.Amount, dots, counted,
@@ -357,7 +370,8 @@ public sealed class FightTracker
             return;
 
         var fight = Current;
-        var counted = dots.Where(d => Counts(d.SourceId, d.SourceOwnerId)).Select(d => d.SourceId).ToHashSet();
+        var counted = dots.Where(d => Counts(d.SourceId, d.SourceOwnerId) && !OutOfRange(d.SourceId, d.SourceOwnerId))
+            .Select(d => d.SourceId).ToHashSet();
         fight.HotTicks.Add(new DotTick(tick.Time, tick.TargetId, tick.Amount, dots, counted, tick.Overheal));
         NoteActions(fight, dots);
         if (Counts(tick.TargetId, 0))
@@ -490,6 +504,7 @@ public sealed class FightTracker
                 CharacterName = context?.CharacterName ?? string.Empty,
                 World = context?.World ?? string.Empty,
                 LocalPlayerId = context?.LocalPlayerId ?? 0,
+                AreaKey = context?.AreaKey,
             };
             deaths.Clear();
             shields.Clear();
@@ -512,6 +527,21 @@ public sealed class FightTracker
             return false;
         var enemyId = sourceIsPlayer ? targetId : sourceOwnerId != 0 ? sourceOwnerId : sourceId;
         return Current.Enemies.ContainsKey(enemyId);
+    }
+
+    private bool IsPlayerSide(uint id, uint ownerId) =>
+        world.IsAlly(id) || world.IsOtherPlayer(id) || (ownerId != 0 && (world.IsAlly(ownerId) || world.IsOtherPlayer(ownerId)));
+
+    private bool EventOutOfRange(uint sourceId, uint sourceOwnerId, uint targetId) =>
+        IsPlayerSide(sourceId, sourceOwnerId) ? OutOfRange(sourceId, sourceOwnerId)
+        : IsPlayerSide(targetId, 0) && OutOfRange(targetId, 0);
+
+    private bool OutOfRange(uint id, uint ownerId)
+    {
+        var player = ownerId != 0 ? ownerId : id;
+        if (player == 0 || player == world.LocalPlayerId)
+            return false;
+        return world.DistanceTo(player) is { } distance && distance > MaxRange;
     }
 
     private bool OnMeter(uint id, uint ownerId) =>

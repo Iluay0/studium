@@ -113,7 +113,7 @@ public sealed class EnemyStats
     public bool Died { get; set; }
 }
 
-public sealed record FightContext(string Zone, string CharacterName, string World, uint LocalPlayerId);
+public sealed record FightContext(string Zone, string CharacterName, string World, uint LocalPlayerId, string? AreaKey = null);
 
 public sealed class Fight
 {
@@ -130,6 +130,10 @@ public sealed class Fight
     public string CharacterName { get; set; } = string.Empty;
     public string World { get; set; } = string.Empty;
     public uint LocalPlayerId { get; set; }
+    public string? AreaKey { get; set; }
+
+    [JsonIgnore]
+    public string? Title { get; set; }
 
     public Dictionary<uint, CombatantStats> Combatants { get; init; } = new();
     public Dictionary<uint, EnemyStats> Enemies { get; init; } = new();
@@ -176,7 +180,7 @@ public sealed class Fight
     public EnemyStats? MainEnemy => Enemies.Values.MaxBy(e => e.DamageTaken);
 
     [JsonIgnore]
-    public string Name => MainEnemy?.Name ?? "Encounter";
+    public string Name => Title ?? MainEnemy?.Name ?? "Encounter";
 
     [JsonIgnore]
     public TimeSpan FinalDuration => Duration(EndTime ?? LastActivity);

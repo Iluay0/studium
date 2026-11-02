@@ -1,3 +1,4 @@
+using System.Numerics;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.ClientState.Objects.Types;
@@ -17,6 +18,8 @@ public sealed class FightService : ICombatWorld, IDisposable
     private readonly IObjectTable objectTable;
     private readonly IPartyList partyList;
     private readonly IDutyState dutyState;
+    private readonly IClientState clientState;
+    private readonly GameNames names;
     private readonly HashSet<uint> allies = new();
     private readonly HashSet<uint> partyMembers = new();
     private readonly HashSet<uint> otherPlayers = new();
@@ -36,6 +39,9 @@ public sealed class FightService : ICombatWorld, IDisposable
         this.objectTable = objectTable;
         this.partyList = partyList;
         this.dutyState = dutyState;
+        this.clientState = clientState;
+        this.names = names;
+        EnterArea(clientState.TerritoryType);
 
         Tracker = new FightTracker(this)
         {
@@ -46,24 +52,40 @@ public sealed class FightService : ICombatWorld, IDisposable
                     names.Zone(clientState.TerritoryType),
                     me?.Name.TextValue ?? string.Empty,
                     me?.HomeWorld.ValueNullable?.Name.ExtractText() ?? string.Empty,
-                    me?.EntityId ?? 0);
+                    me?.EntityId ?? 0,
+                    CurrentAreaKey);
             },
         };
 
         // Filled on the first frame: the constructor runs off the main thread, where the object table can't be read.
         source.TracksHp = IsAlly;
+        ApplyConfig();
+        config.Saved += ApplyConfig;
         source.EventReceived += OnEvent;
         framework.Update += OnFrameworkUpdate;
         dutyState.DutyWiped += OnDutyWiped;
         dutyState.DutyCompleted += OnDutyCompleted;
+        clientState.TerritoryChanged += EnterArea;
     }
 
     public void Dispose()
     {
+        config.Saved -= ApplyConfig;
         source.EventReceived -= OnEvent;
         framework.Update -= OnFrameworkUpdate;
         dutyState.DutyWiped -= OnDutyWiped;
         dutyState.DutyCompleted -= OnDutyCompleted;
+        clientState.TerritoryChanged -= EnterArea;
+    }
+
+    public string CurrentAreaKey { get; private set; } = string.Empty;
+
+    public string CurrentZone { get; private set; } = string.Empty;
+
+    private void EnterArea(uint territory)
+    {
+        CurrentZone = names.Zone(territory);
+        CurrentAreaKey = $"{territory}:{DateTime.UtcNow:O}";
     }
 
     public bool IsAlly(uint entityId) => allies.Contains(entityId);
@@ -82,6 +104,13 @@ public sealed class FightService : ICombatWorld, IDisposable
             || enemy.TargetObjectId is not (0 or EffectDecoder.InvalidEntityId));
 
     public uint LocalPlayerId => objectTable.LocalPlayer?.EntityId ?? 0;
+
+    public float? DistanceTo(uint entityId) =>
+        objectTable.LocalPlayer is { } me && objectTable.SearchByEntityId(entityId) is { } actor
+            ? Vector3.Distance(me.Position, actor.Position)
+            : null;
+
+    private void ApplyConfig() => Tracker.MaxRange = config.MaxRange;
 
     public string? CurrentFflogsUrl
     {

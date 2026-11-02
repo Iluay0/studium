@@ -24,6 +24,10 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
     private readonly IFontHandle headerFont;
     private readonly IFontHandle chipFont;
     private Fight? viewedFight;
+    private (string Key, string Zone)? viewedArea;
+    private Fight? areaFight;
+    private (string Key, List<Guid> Ids, Fight Fight)? pastArea;
+    private int areaPulls;
     private bool? appliedLock;
     private bool? appliedClickThrough;
     private Configuration Config => plugin.Configuration;
@@ -116,12 +120,20 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
     {
         var tracker = plugin.Fights.Tracker;
         if (tracker.Current is { HeldAt: null })
+        {
             viewedFight = null;
-        var fight = viewedFight ?? tracker.Current ?? tracker.Last;
+            viewedArea = null;
+        }
         var now = DateTime.UtcNow;
+        var areaMode = Config.MeterScope == MeterScope.Area;
+        var fight = areaMode ? AreaFight(now) : viewedFight ?? tracker.Current ?? tracker.Last;
         var summary = fight != null ? FightView.Summarize(fight, now, Config.MergePets) : null;
 
-        DrawHeader(fight, now);
+        var title = areaMode ? AreaTitle(viewedArea?.Zone ?? plugin.Fights.CurrentZone) : null;
+        var detail = areaMode
+            ? areaPulls == 0 ? "No pulls" : PullsText(areaPulls)
+            : fight != null ? fight.Zone : AreaTitle(plugin.Fights.CurrentZone);
+        DrawHeader(fight, now, title, detail);
 
         var footerHeight = ImGui.GetFrameHeightWithSpacing() + ImGui.GetStyle().ItemSpacing.Y + 1;
         DrawTable(new Vector2(0, -footerHeight), fight, summary);
@@ -154,7 +166,48 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
 
     private bool ClickThroughConfigured => Config.LockMeter && Config.ClickThroughWhenLocked;
 
-    private void DrawHeader(Fight? fight, DateTime now)
+    private Fight? AreaFight(DateTime now)
+    {
+        var tracker = plugin.Fights.Tracker;
+        var key = viewedArea?.Key ?? plugin.Fights.CurrentAreaKey;
+        var zone = AreaTitle(viewedArea?.Zone ?? plugin.Fights.CurrentZone);
+        var saved = CharacterEntries().Where(e => e.AreaKey == key).Select(e => e.Id).ToList();
+        var live = viewedArea == null && tracker.Current is { } current && current.AreaKey == key && !saved.Contains(current.Id)
+            ? current
+            : null;
+        areaPulls = saved.Count + (live != null ? 1 : 0);
+        var past = PastArea(key, zone, saved, now);
+        var merged = live == null ? past : AreaView.Merge(past == null ? [live] : [past, live], key, zone, now);
+        if (areaFight != null && merged != null && merged != areaFight && areaFight.AreaKey == merged.AreaKey)
+            plugin.DrillDownWindow.Replace(areaFight, merged);
+        areaFight = merged;
+        return merged;
+    }
+
+    private Fight? PastArea(string key, string zone, List<Guid> ids, DateTime now)
+    {
+        if (ids.Count == 0)
+            return null;
+        if (pastArea is { } cached && cached.Key == key && cached.Ids.SequenceEqual(ids))
+            return cached.Fight;
+        var fights = ids.Select(plugin.History.Open).OfType<Fight>().ToList();
+        var merged = AreaView.Merge(fights, key, zone, now);
+        pastArea = (key, ids, merged);
+        return merged;
+    }
+
+    private static string AreaTitle(string zone) => string.IsNullOrEmpty(zone) ? "Area" : zone;
+
+    private IEnumerable<FightIndexEntry> CharacterEntries()
+    {
+        var character = plugin.Fights.CurrentCharacterKey;
+        return plugin.History.Entries.Where(e => character == null || HistoryFilter.CharacterKey(e) == character);
+    }
+
+    private IEnumerable<FightIndexEntry> DropdownCandidates() =>
+        CharacterEntries().Where(e => e.DurationSeconds >= Config.HideShortFightsSeconds);
+
+    private void DrawHeader(Fight? fight, DateTime now, string? title, string detail)
     {
         var style = ImGui.GetStyle();
         var rowTop = ImGui.GetCursorPosY();
@@ -172,16 +225,16 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
             FightOutcome.Wipe => "Wipe",
             _ => null,
         };
-        var chipHeight = 0f;
-        if (chipText != null)
-        {
-            using (chipFont.Push())
-                chipHeight = ImGui.GetTextLineHeight() + 2;
-        }
+        float smallLine;
+        using (chipFont.Push())
+            smallLine = ImGui.GetTextLineHeight();
+        var chipSlot = smallLine + 2;
+        var chipHeight = chipText != null ? chipSlot : 0f;
 
-        var textBlockHeight = lineHeight * 2;
+        var buttonSize = ImGui.GetFrameHeight();
+        var blockHeight = buttonSize + smallLine;
+        var rowHeight = Math.Max(timerSize.Y + chipSlot, blockHeight);
         var leftHeight = timerSize.Y + chipHeight;
-        var rowHeight = Math.Max(leftHeight, textBlockHeight);
         var leftTop = rowTop + ((rowHeight - leftHeight) / 2);
         var timerX = ImGui.GetCursorPosX();
 
@@ -197,39 +250,63 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
 
         // Placed by hand: SameLine would attach to the chip, not the timer.
         var textX = timerX + timerSize.X + 10;
-        var buttonSize = ImGui.GetFrameHeight();
-        var buttonsX = ImGui.GetContentRegionMax().X - (buttonSize * 2) - 2;
-        var textWidth = buttonsX - textX - style.ItemSpacing.X;
-
-        var showName = textWidth >= 40;
-        var showZone = showName && !string.IsNullOrEmpty(fight?.Zone);
-        var blockHeight = showZone ? textBlockHeight : lineHeight;
         var blockTop = rowTop + ((rowHeight - blockHeight) / 2);
+        var titleTop = blockTop + ((buttonSize - lineHeight) / 2);
+        var historyX = ImGui.GetContentRegionMax().X - buttonSize;
 
-        if (showName)
-        {
-            ImGui.SetCursorPos(new Vector2(textX, blockTop));
-            DrawFightPicker(fight, textWidth);
-        }
-        if (showZone)
-        {
-            ImGui.SetCursorPos(new Vector2(textX, blockTop + lineHeight));
-            Widgets.Text(Theme.Muted, Widgets.Truncate(fight!.Zone, textWidth));
-        }
+        ImGui.SetCursorPos(new Vector2(textX, titleTop));
+        var badgeWidth = DrawScopeBadge();
+        ImGui.SetCursorPos(new Vector2(textX + badgeWidth, titleTop));
+        DrawFightPicker(fight, Math.Max(historyX - 2 - textX - badgeWidth, 0), title);
 
-        ImGui.SetCursorPos(new Vector2(buttonsX, rowTop + ((rowHeight - buttonSize) / 2)));
+        ImGui.SetCursorPos(new Vector2(historyX, blockTop));
         if (Widgets.FlatIconButton("##history", FontAwesomeIcon.History, "Fight history"))
             plugin.OpenHistory();
-        ImGui.SameLine(0, 2);
-        if (Widgets.FlatIconButton("##settings", FontAwesomeIcon.Cog, "Settings"))
+
+        var detailTop = blockTop + buttonSize;
+        var settingsX = historyX + ((buttonSize - smallLine) / 2);
+        using (chipFont.Push())
+        {
+            ImGui.SetCursorPos(new Vector2(textX, detailTop));
+            Widgets.Text(Theme.Muted, Widgets.Truncate(detail, Math.Max(settingsX - style.ItemSpacing.X - textX, 0)));
+        }
+        ImGui.SetCursorPos(new Vector2(settingsX, detailTop));
+        if (Widgets.FlatIconButton("##settings", FontAwesomeIcon.Cog, "Settings", smallLine))
             plugin.OpenSettings();
 
         ImGui.SetCursorPosY(rowTop + rowHeight + style.ItemSpacing.Y);
     }
 
+    private float DrawScopeBadge()
+    {
+        const float gap = 6f;
+        var area = Config.MeterScope == MeterScope.Area;
+        var text = area ? "A" : "F";
+        var padding = new Vector2(4, 0);
+        var size = ImGui.CalcTextSize(text) + (padding * 2);
+        var start = ImGui.GetCursorScreenPos();
+        if (ImGui.InvisibleButton("##scope", size))
+        {
+            Config.MeterScope = area ? MeterScope.Fight : MeterScope.Area;
+            Config.Save();
+        }
+        var hovered = ImGui.IsItemHovered();
+        if (hovered)
+            ImGui.SetTooltip(area ? "Area: every pull in this zone visit. Click for single fights." : "Fight: one pull. Click for the whole area.");
+        var drawList = ImGui.GetWindowDrawList();
+        drawList.AddRectFilled(start, start + size, Theme.U32(Theme.Accent with { W = hovered ? 0.22f : 0.12f }), 3f);
+        Widgets.DrawText(drawList, start + padding, Theme.U32(hovered ? Theme.Bright : Theme.Accent), text);
+        return size.X + gap;
+    }
+
     public void View(Fight fight)
     {
         viewedFight = fight;
+        if (Config.MeterScope != MeterScope.Fight)
+        {
+            Config.MeterScope = MeterScope.Fight;
+            Config.Save();
+        }
         IsOpen = true;
     }
 
@@ -239,7 +316,7 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
             viewedFight = null;
     }
 
-    private void DrawFightPicker(Fight? shown, float maxWidth)
+    private void DrawFightPicker(Fight? shown, float maxWidth, string? title)
     {
         // Caret from the icon font; the default font has no arrow glyph.
         var caret = FontAwesomeIcon.CaretDown.ToIconString();
@@ -247,38 +324,100 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
         using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
             caretWidth = ImGui.CalcTextSize(caret).X;
         const float spacing = 5f;
-        var name = Widgets.Truncate(shown?.Name ?? "No fight yet", Math.Max(maxWidth - spacing - caretWidth, 0));
-        var nameWidth = ImGui.CalcTextSize(name).X;
+        var fullName = title ?? shown?.Name ?? "No fight yet";
+        var showCaret = ImGui.CalcTextSize(fullName).X + spacing + caretWidth <= maxWidth;
+        var name = Widgets.Truncate(fullName, showCaret ? maxWidth - spacing - caretWidth : maxWidth);
         var lineHeight = ImGui.GetTextLineHeight();
 
         var start = ImGui.GetCursorPos();
         ImGui.PushStyleColor(ImGuiCol.HeaderHovered, Theme.Hover);
         ImGui.PushStyleColor(ImGuiCol.HeaderActive, Theme.Hover);
-        var clicked = ImGui.Selectable("##fightPicker", false, ImGuiSelectableFlags.None, new Vector2(nameWidth + spacing + caretWidth, lineHeight));
+        var clicked = ImGui.Selectable("##fightPicker", false, ImGuiSelectableFlags.None, new Vector2(Math.Max(maxWidth, 1), lineHeight));
         ImGui.PopStyleColor(2);
         if (clicked)
             ImGui.OpenPopup("##fights");
         var hovered = ImGui.IsItemHovered();
         if (hovered)
-            ImGui.SetTooltip("Switch fight");
+            ImGui.SetTooltip(title != null ? "Switch area" : "Switch fight");
         var end = ImGui.GetCursorPos();
 
         ImGui.SetCursorPos(start);
         Widgets.Text(Theme.Bright, name);
-        ImGui.SameLine(0, spacing);
-        using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
-            Widgets.Text(hovered ? Theme.Text : Theme.Dim, caret);
+        if (showCaret)
+        {
+            ImGui.SetCursorPos(start with { X = start.X + maxWidth - caretWidth });
+            using (Plugin.PluginInterface.UiBuilder.IconFontHandle.Push())
+                Widgets.Text(hovered ? Theme.Text : Theme.Dim, caret);
+        }
         ImGui.SetCursorPos(end);
 
         if (!ImGui.BeginPopup("##fights"))
             return;
 
+        if (title != null)
+            DrawAreaList();
+        else
+            DrawFightList(shown);
+        ImGui.EndPopup();
+    }
+
+    private void DrawAreaList()
+    {
+        var now = DateTime.UtcNow;
         var tracker = plugin.Fights.Tracker;
-        var character = plugin.Fights.CurrentCharacterKey;
-        var candidates = plugin.History.Entries.Where(e =>
-            (character == null || HistoryFilter.CharacterKey(e) == character)
-            && e.DurationSeconds >= Config.HideShortFightsSeconds);
-        var fights = PlaySessions.DropdownFights(candidates, DateTime.UtcNow, TimeSpan.FromHours(Config.SessionGapHours));
+        var currentKey = plugin.Fights.CurrentAreaKey;
+        var areas = PlaySessions.DropdownAreas(CharacterEntries(), now, TimeSpan.FromHours(Config.SessionGapHours));
+        var current = areas.FirstOrDefault(a => a.Key == currentKey);
+        var live = tracker.Current is { } running && running.AreaKey == currentKey && current?.Fights.All(e => e.Id != running.Id) != false
+            ? running
+            : null;
+
+        var lines = new List<(string? Key, string Zone, TimeSpan Duration, int Pulls)>
+        {
+            (null, AreaTitle(plugin.Fights.CurrentZone),
+                TimeSpan.FromSeconds(current?.DurationSeconds ?? 0) + (live?.Duration(now) ?? TimeSpan.Zero),
+                (current?.Pulls ?? 0) + (live != null ? 1 : 0)),
+        };
+        lines.AddRange(areas.Where(a => a.Key != currentKey)
+            .Select(a => ((string?)a.Key, AreaTitle(a.Zone), TimeSpan.FromSeconds(a.DurationSeconds), a.Pulls)));
+
+        var durationSlot = lines.Max(l => ImGui.CalcTextSize(Format.Duration(l.Duration)).X);
+        var pullsSlot = lines.Max(l => ImGui.CalcTextSize(PullsText(l.Pulls)).X);
+        foreach (var line in lines)
+        {
+            if (AreaItem(line.Key ?? "live", line.Duration, PullsText(line.Pulls), line.Zone, viewedArea?.Key == line.Key, durationSlot, pullsSlot))
+                viewedArea = line.Key is { } key ? (key, line.Zone) : null;
+        }
+    }
+
+    private static string PullsText(int pulls) => pulls == 1 ? "1 pull" : $"{pulls} pulls";
+
+    private static bool AreaItem(string id, TimeSpan duration, string pulls, string zone, bool selected, float durationSlot, float pullsSlot)
+    {
+        const float gap = 8;
+        var lineHeight = ImGui.GetTextLineHeight();
+        var origin = ImGui.GetCursorPos();
+        var clicked = ImGui.Selectable($"##area{id}", selected, ImGuiSelectableFlags.None, new Vector2(0, lineHeight));
+        var after = ImGui.GetCursorPos();
+
+        var durationText = Format.Duration(duration);
+        ImGui.SetCursorPos(origin with { X = origin.X + durationSlot - ImGui.CalcTextSize(durationText).X });
+        Widgets.Text(Theme.Muted, durationText);
+
+        var pullsX = origin.X + durationSlot + gap;
+        ImGui.SetCursorPos(origin with { X = pullsX + pullsSlot - ImGui.CalcTextSize(pulls).X });
+        Widgets.Text(Theme.Dim, pulls);
+
+        ImGui.SetCursorPos(origin with { X = pullsX + pullsSlot + gap });
+        Widgets.Text(Theme.Text, zone);
+        ImGui.SetCursorPos(after);
+        return clicked;
+    }
+
+    private void DrawFightList(Fight? shown)
+    {
+        var tracker = plugin.Fights.Tracker;
+        var fights = PlaySessions.DropdownFights(DropdownCandidates(), DateTime.UtcNow, TimeSpan.FromHours(Config.SessionGapHours));
 
         if (fights.Count == 0 && tracker.Current == null)
             ImGui.TextDisabled("No fights yet this session.");
@@ -303,8 +442,6 @@ public sealed class MeterWindow : Theme.ThemedWindow, IDisposable
                 && plugin.History.Open(entry.Id) is { } picked)
                 viewedFight = picked == tracker.Last ? null : picked;
         }
-
-        ImGui.EndPopup();
     }
 
     private static bool FightItem(string id, string? chip, Vector4 chipColour, TimeSpan duration, string name, bool selected,

@@ -16,7 +16,8 @@ public sealed record FightIndexEntry(
     uint JobId,
     double LocalDps,
     double RaidDps,
-    bool Pinned)
+    bool Pinned,
+    string? AreaKey = null)
 {
     public static FightIndexEntry From(Fight fight, bool pinned = false)
     {
@@ -25,7 +26,7 @@ public sealed record FightIndexEntry(
         var me = summary.Rows.FirstOrDefault(r => r.Id == fight.LocalPlayerId);
         return new FightIndexEntry(
             fight.Id, fight.Start, fight.FinalDuration.TotalSeconds, fight.Name, fight.Zone, fight.Outcome,
-            fight.CharacterName, fight.World, me?.JobId ?? 0, me?.Dps ?? 0, summary.RaidDps, pinned);
+            fight.CharacterName, fight.World, me?.JobId ?? 0, me?.Dps ?? 0, summary.RaidDps, pinned, fight.AreaKey);
     }
 }
 

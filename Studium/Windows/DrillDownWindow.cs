@@ -35,6 +35,12 @@ public sealed class DrillDownWindow : Theme.ThemedWindow
         BringToFront();
     }
 
+    public void Replace(Fight previous, Fight current)
+    {
+        if (fight == previous)
+            fight = current;
+    }
+
     public override void PreDraw()
     {
         base.PreDraw();

@@ -4,6 +4,11 @@ namespace Studium.Core.History;
 
 public sealed record PlaySession(DateTime Start, DateTime End, IReadOnlyList<FightIndexEntry> Fights);
 
+public sealed record AreaEntry(string Key, string Zone, DateTime Start, double DurationSeconds, IReadOnlyList<FightIndexEntry> Fights)
+{
+    public int Pulls => Fights.Count;
+}
+
 public static class PlaySessions
 {
     public const int DropdownMaximum = 30;
@@ -33,12 +38,21 @@ public static class PlaySessions
         return sessions;
     }
 
-    public static IReadOnlyList<FightIndexEntry> DropdownFights(IEnumerable<FightIndexEntry> entries, DateTime now, TimeSpan gap)
+    public static IReadOnlyList<FightIndexEntry> DropdownFights(IEnumerable<FightIndexEntry> entries, DateTime now, TimeSpan gap) =>
+        CurrentSession(entries, now, gap).Take(DropdownMaximum).ToList();
+
+    public static IReadOnlyList<AreaEntry> DropdownAreas(IEnumerable<FightIndexEntry> entries, DateTime now, TimeSpan gap) =>
+        CurrentSession(entries, now, gap)
+            .Where(e => !string.IsNullOrEmpty(e.AreaKey))
+            .GroupBy(e => e.AreaKey!)
+            .Select(g => new AreaEntry(g.Key, g.First().Zone, g.Min(e => e.Start), g.Sum(e => e.DurationSeconds), g.ToList()))
+            .Take(DropdownMaximum)
+            .ToList();
+
+    private static IReadOnlyList<FightIndexEntry> CurrentSession(IEnumerable<FightIndexEntry> entries, DateTime now, TimeSpan gap)
     {
         var sessions = Group(entries, gap);
-        if (sessions.Count == 0 || now - sessions[0].End >= gap)
-            return [];
-        return sessions[0].Fights.Take(DropdownMaximum).ToList();
+        return sessions.Count == 0 || now - sessions[0].End >= gap ? [] : sessions[0].Fights;
     }
 
     private static PlaySession Make(List<FightIndexEntry> fights) =>

@@ -21,11 +21,11 @@ public sealed class FightStoreTests : IDisposable
         public ActorSnapshot? Lookup(uint id) => id == 1 ? new("Alma Sylphe", 23, 0) : new("Striking Dummy", 0, 0);
     }
 
-    private static Fight MakeFight(DateTime start, long damage = 1000)
+    private static Fight MakeFight(DateTime start, long damage = 1000, string? areaKey = null)
     {
         var tracker = new FightTracker(new World())
         {
-            ContextProvider = () => new FightContext("The Lavender Beds", "Alma Sylphe", "Moogle", 1),
+            ContextProvider = () => new FightContext("The Lavender Beds", "Alma Sylphe", "Moogle", 1, areaKey),
         };
         tracker.Handle(new ActionHitEvent(start, 1, 0, 100, 7406, 1, HitKind.Damage, damage, true, false));
         tracker.Handle(new PeriodicTickEvent(start.AddSeconds(3), 1, 0, 100, false, 50));
@@ -60,6 +60,31 @@ public sealed class FightStoreTests : IDisposable
         Assert.Equal(1000, stats.DamageAbilities[7406].Total);
         Assert.Equal(50, stats.DamageAbilities[AbilityStats.DotKey].Total);
         Assert.Equal("Striking Dummy", loaded.Name);
+    }
+
+    [Fact]
+    public void AreaKeyIsSavedInFightAndIndex()
+    {
+        var fight = MakeFight(T0, areaKey: "339:2026-09-24T19:55:00.0000000Z");
+        new FightStore(directory).Save(fight);
+
+        var reopened = new FightStore(directory);
+        Assert.Equal(fight.AreaKey, Assert.Single(reopened.Entries).AreaKey);
+        Assert.Equal(fight.AreaKey, reopened.Load(fight.Id)!.AreaKey);
+    }
+
+    [Fact]
+    public void IndexWithoutAreaKeyLoads()
+    {
+        var fight = MakeFight(T0, areaKey: "339:2026-09-24T19:55:00.0000000Z");
+        new FightStore(directory).Save(fight);
+        var indexPath = Path.Combine(directory, "index.json");
+        var json = File.ReadAllText(indexPath);
+        File.WriteAllText(indexPath, json.Replace(",\"AreaKey\":\"339:2026-09-24T19:55:00.0000000Z\"", string.Empty));
+        Assert.DoesNotContain("AreaKey", File.ReadAllText(indexPath));
+
+        var entry = Assert.Single(new FightStore(directory).Entries);
+        Assert.Null(entry.AreaKey);
     }
 
     [Fact]

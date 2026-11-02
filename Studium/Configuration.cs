@@ -10,6 +10,7 @@ public class Configuration : IPluginConfiguration
 
     public bool MeterOpen { get; set; } = true;
     public MeterTab MeterTab { get; set; } = MeterTab.Dps;
+    public MeterScope MeterScope { get; set; } = MeterScope.Fight;
     public MeterVisibility Visibility { get; set; } = MeterVisibility.Always;
     public bool HideInCutscenes { get; set; } = true;
     public bool LockMeter { get; set; }
@@ -22,14 +23,13 @@ public class Configuration : IPluginConfiguration
     public bool YouForSelf { get; set; }
     public bool MergePets { get; set; } = true;
     public bool ShowAllPlayers { get; set; } = true;
+    public int MaxRange { get; set; } = 128;
     public GaugeStyle GaugeStyle { get; set; } = GaugeStyle.Underline;
     public Dictionary<MeterTab, List<string>> MeterColumns { get; set; } = new();
 
     public int RetentionHours { get; set; } = RetentionPeriod.DefaultHours;
     public RetentionUnit RetentionUnit { get; set; } = RetentionUnit.Days;
     public bool AutoDeleteFights { get; set; } = true;
-    public bool SkipShortFights { get; set; } = true;
-    public int SkipShortFightsSeconds { get; set; } = 30;
     public int HideShortFightsSeconds { get; set; } = 15;
     public int SessionGapHours { get; set; } = 4;
 
@@ -39,9 +39,6 @@ public class Configuration : IPluginConfiguration
     {
         if (Version >= 3)
             return false;
-        // v2: the skip-short-fights default moved from 10 s to 30 s; move users still on 10.
-        if (Version < 2 && SkipShortFightsSeconds == 10)
-            SkipShortFightsSeconds = 30;
         BackgroundOpacity = ClampOpacity(BackgroundOpacity);
         Version = 3;
         return true;
